@@ -10,7 +10,7 @@ import java.util.Locale
 
 @Composable
 fun SimulationScreen() {
-    var quota by remember { mutableDoubleStateOf(30.0) }
+    var quota by remember { mutableDoubleStateOf(4.5) }
     var currentUsage by remember { mutableDoubleStateOf(5.0) }
     var daysLeft by remember { mutableIntStateOf(15) }
 

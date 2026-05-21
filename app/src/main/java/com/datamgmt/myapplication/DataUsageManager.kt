@@ -27,6 +27,18 @@ class DataUsageManager(
     fun getMobileUsageToday(): Long {
         val calendar = Calendar.getInstance()
         calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        val startTime = calendar.timeInMillis
+        val endTime = System.currentTimeMillis()
+        return getUsageForRange(startTime, endTime)
+    }
+
+    fun getMobileUsageThisMonth(): Long {
+        val calendar = Calendar.getInstance()
+        calendar.set(Calendar.DAY_OF_MONTH, 1)
+        setStartOfDay(calendar)
         val startTime = calendar.timeInMillis
         val endTime = System.currentTimeMillis()
         return getUsageForRange(startTime, endTime)

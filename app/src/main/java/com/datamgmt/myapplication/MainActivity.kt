@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val usageManager = DataUsageManager(this)
-            var monthlyQuota by remember { mutableStateOf("30") }
+            var monthlyQuota by remember { mutableStateOf("4.5") }
             var settingsLoaded by remember { mutableStateOf(false) }
             var hasUsageStatsPermission by remember { mutableStateOf(checkUsageStatsPermission()) }
             var hasReadPhoneState by remember { mutableStateOf(false) }
@@ -74,6 +74,9 @@ class MainActivity : ComponentActivity() {
             var sim1Usage by remember { mutableStateOf(DataUsageManager.UsageBreakdown()) }
             var sim2Usage by remember { mutableStateOf(DataUsageManager.UsageBreakdown()) }
             var combinedUsage by remember { mutableStateOf(DataUsageManager.UsageBreakdown()) }
+            var dailyQuotaGb by remember { mutableDoubleStateOf(0.0) }
+            var todayUsageBytes by remember { mutableLongStateOf(0L) }
+            var monthUsageBytes by remember { mutableLongStateOf(0L) }
             val dateFormatter = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()) }
 
             val database = AppDatabase.getDatabase(this)
@@ -150,6 +153,20 @@ class MainActivity : ComponentActivity() {
                     combinedUsage = combined
                     downloadBytes = selectedUsage.downloadBytes
                     uploadBytes = selectedUsage.uploadBytes
+
+                    // Calculate daily quota with rollover
+                    val todayB = usageManager.getMobileUsageToday()
+                    val monthB = usageManager.getMobileUsageThisMonth()
+                    todayUsageBytes = todayB
+                    monthUsageBytes = monthB
+                    val todayGb = todayB / (1024.0 * 1024.0 * 1024.0)
+                    val monthGb = monthB / (1024.0 * 1024.0 * 1024.0)
+                    val quota = monthlyQuota.toDoubleOrNull() ?: 4.5
+                    val cal = java.util.Calendar.getInstance()
+                    val remaining = cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH) - cal.get(java.util.Calendar.DAY_OF_MONTH) + 1
+                    val usedBefore = (monthGb - todayGb).coerceAtLeast(0.0)
+                    dailyQuotaGb = QuotaCalculator.calculateDailyQuota(quota, usedBefore, remaining)
+
                     delay(15_000)
                 }
             }
@@ -262,6 +279,46 @@ class MainActivity : ComponentActivity() {
 
                     Spacer(modifier = Modifier.height(16.dp))
 
+                    // Daily quota card with progress
+                    val dailyQuotaBytes = (dailyQuotaGb * 1024.0 * 1024.0 * 1024.0).toLong()
+                    val dailyProgress = if (dailyQuotaBytes > 0) (todayUsageBytes.toFloat() / dailyQuotaBytes).coerceIn(0f, 1f) else 0f
+                    val progressColor = when {
+                        dailyProgress >= 1f -> Color.Red
+                        dailyProgress >= 0.8f -> Color(0xFFFF9800)
+                        else -> Color(0xFF4CAF50)
+                    }
+                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text("Quota journalier", style = MaterialTheme.typography.titleMedium)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Utilisé aujourd'hui")
+                                Text(DataUsageManager.humanReadable(todayUsageBytes))
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Quota du jour")
+                                Text(String.format(Locale.getDefault(), "%.2f Go", dailyQuotaGb))
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                progress = { dailyProgress },
+                                modifier = Modifier.fillMaxWidth().height(8.dp),
+                                color = progressColor,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Consommation mensuelle")
+                                Text("${DataUsageManager.humanReadable(monthUsageBytes)} / ${String.format(Locale.getDefault(), "%.1f Go", monthlyQuota.toDoubleOrNull() ?: 4.5)}")
+                            }
+                            if (dailyProgress >= 1f) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Quota journalier atteint — Blocage VPN actif", color = Color.Red, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
                     // Stats cards
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         StatsCard(title = "Download", value = DataUsageManager.humanReadable(downloadBytes), modifier = Modifier.weight(1f))
@@ -292,7 +349,7 @@ class MainActivity : ComponentActivity() {
 
                     Button(
                         onClick = {
-                            val quota = monthlyQuota.toDoubleOrNull() ?: 30.0
+                            val quota = monthlyQuota.toDoubleOrNull() ?: 4.5
                             lifecycleScope.launch {
                                 val settings = database.settingsDao().getSettings() ?: AppSettings()
                                 database.settingsDao().saveSettings(settings.copy(monthlyQuotaGb = quota))
