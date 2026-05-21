@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">R.DataCons</string>
+    <string name="app_title">R.DataCons — Suivi Data</string>
+    <string name="quota_label">Quota mensuel (Go)</string>
+    <string name="authorize_usage_stats">Autoriser l acces aux stats</string>
+    <string name="enable_vpn_protection">Activer Protection VPN</string>
+</resources>
