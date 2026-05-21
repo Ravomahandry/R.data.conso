@@ -60,6 +60,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             val usageManager = DataUsageManager(this)
             var monthlyQuota by remember { mutableStateOf("4.5") }
+            var sim1Quota by remember { mutableStateOf("4.5") }
+            var sim2Quota by remember { mutableStateOf("4.5") }
+            var speedMonitorActive by remember { mutableStateOf(false) }
             var settingsLoaded by remember { mutableStateOf(false) }
             var hasUsageStatsPermission by remember { mutableStateOf(checkUsageStatsPermission()) }
             var hasReadPhoneState by remember { mutableStateOf(false) }
@@ -75,8 +78,12 @@ class MainActivity : ComponentActivity() {
             var sim2Usage by remember { mutableStateOf(DataUsageManager.UsageBreakdown()) }
             var combinedUsage by remember { mutableStateOf(DataUsageManager.UsageBreakdown()) }
             var dailyQuotaGb by remember { mutableDoubleStateOf(0.0) }
+            var sim1DailyQuotaGb by remember { mutableDoubleStateOf(0.0) }
+            var sim2DailyQuotaGb by remember { mutableDoubleStateOf(0.0) }
             var todayUsageBytes by remember { mutableLongStateOf(0L) }
             var monthUsageBytes by remember { mutableLongStateOf(0L) }
+            var sim1TodayBytes by remember { mutableLongStateOf(0L) }
+            var sim2TodayBytes by remember { mutableLongStateOf(0L) }
             val dateFormatter = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()) }
 
             val database = AppDatabase.getDatabase(this)
@@ -85,6 +92,8 @@ class MainActivity : ComponentActivity() {
                 val s = database.settingsDao().getSettings()
                 s?.let {
                     monthlyQuota = it.monthlyQuotaGb.toString()
+                    sim1Quota = it.sim1QuotaGb.toString()
+                    sim2Quota = it.sim2QuotaGb.toString()
                 }
 
                 // request read phone state if not granted
@@ -154,7 +163,7 @@ class MainActivity : ComponentActivity() {
                     downloadBytes = selectedUsage.downloadBytes
                     uploadBytes = selectedUsage.uploadBytes
 
-                    // Calculate daily quota with rollover
+                    // Calculate daily quota with rollover (global)
                     val todayB = usageManager.getMobileUsageToday()
                     val monthB = usageManager.getMobileUsageThisMonth()
                     todayUsageBytes = todayB
@@ -166,6 +175,25 @@ class MainActivity : ComponentActivity() {
                     val remaining = cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH) - cal.get(java.util.Calendar.DAY_OF_MONTH) + 1
                     val usedBefore = (monthGb - todayGb).coerceAtLeast(0.0)
                     dailyQuotaGb = QuotaCalculator.calculateDailyQuota(quota, usedBefore, remaining)
+
+                    // Calculate per-SIM daily quotas
+                    val simSubs = subscriptions.filter { it.id != "TOTAL" }.take(2)
+                    if (simSubs.isNotEmpty()) {
+                        val s1Today = sim1.totalBytes
+                        sim1TodayBytes = s1Today
+                        val s1Quota = sim1Quota.toDoubleOrNull() ?: 4.5
+                        val s1MonthGb = usageManager.getUsageBreakdownForPeriod(DataUsageManager.PeriodType.MONTHLY, simSubs[0].id).totalBytes / (1024.0 * 1024.0 * 1024.0)
+                        val s1UsedBefore = (s1MonthGb - s1Today / (1024.0 * 1024.0 * 1024.0)).coerceAtLeast(0.0)
+                        sim1DailyQuotaGb = QuotaCalculator.calculateDailyQuota(s1Quota, s1UsedBefore, remaining)
+                    }
+                    if (simSubs.size >= 2) {
+                        val s2Today = sim2.totalBytes
+                        sim2TodayBytes = s2Today
+                        val s2Quota = sim2Quota.toDoubleOrNull() ?: 4.5
+                        val s2MonthGb = usageManager.getUsageBreakdownForPeriod(DataUsageManager.PeriodType.MONTHLY, simSubs[1].id).totalBytes / (1024.0 * 1024.0 * 1024.0)
+                        val s2UsedBefore = (s2MonthGb - s2Today / (1024.0 * 1024.0 * 1024.0)).coerceAtLeast(0.0)
+                        sim2DailyQuotaGb = QuotaCalculator.calculateDailyQuota(s2Quota, s2UsedBefore, remaining)
+                    }
 
                     delay(15_000)
                 }
@@ -279,7 +307,31 @@ class MainActivity : ComponentActivity() {
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Daily quota card with progress
+                    // Per-SIM daily quota cards
+                    Text("Quota journalier par SIM", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SimQuotaCard(
+                            title = "SIM 1",
+                            todayBytes = sim1TodayBytes,
+                            dailyQuotaGb = sim1DailyQuotaGb,
+                            quotaGbStr = sim1Quota,
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        SimQuotaCard(
+                            title = "SIM 2",
+                            todayBytes = sim2TodayBytes,
+                            dailyQuotaGb = sim2DailyQuotaGb,
+                            quotaGbStr = sim2Quota,
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Global quota summary
                     val dailyQuotaBytes = (dailyQuotaGb * 1024.0 * 1024.0 * 1024.0).toLong()
                     val dailyProgress = if (dailyQuotaBytes > 0) (todayUsageBytes.toFloat() / dailyQuotaBytes).coerceIn(0f, 1f) else 0f
                     val progressColor = when {
@@ -287,12 +339,12 @@ class MainActivity : ComponentActivity() {
                         dailyProgress >= 0.8f -> Color(0xFFFF9800)
                         else -> Color(0xFF4CAF50)
                     }
-                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Text("Quota journalier", style = MaterialTheme.typography.titleMedium)
+                            Text("Quota global", style = MaterialTheme.typography.titleMedium)
                             Spacer(modifier = Modifier.height(8.dp))
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Utilisé aujourd'hui")
+                                Text("Total aujourd'hui")
                                 Text(DataUsageManager.humanReadable(todayUsageBytes))
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -307,7 +359,7 @@ class MainActivity : ComponentActivity() {
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Consommation mensuelle")
+                                Text("Conso mensuelle")
                                 Text("${DataUsageManager.humanReadable(monthUsageBytes)} / ${String.format(Locale.getDefault(), "%.1f Go", monthlyQuota.toDoubleOrNull() ?: 4.5)}")
                             }
                             if (dailyProgress >= 1f) {
@@ -340,22 +392,69 @@ class MainActivity : ComponentActivity() {
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    OutlinedTextField(
-                        value = monthlyQuota,
-                        onValueChange = { monthlyQuota = it },
-                        label = { Text(getString(R.string.quota_label)) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Text("Configuration des quotas", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = sim1Quota,
+                            onValueChange = { sim1Quota = it },
+                            label = { Text("SIM 1 (Go/mois)") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = sim2Quota,
+                            onValueChange = { sim2Quota = it },
+                            label = { Text("SIM 2 (Go/mois)") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                    }
 
                     Button(
                         onClick = {
-                            val quota = monthlyQuota.toDoubleOrNull() ?: 4.5
+                            val q1 = sim1Quota.toDoubleOrNull() ?: 4.5
+                            val q2 = sim2Quota.toDoubleOrNull() ?: 4.5
+                            val total = q1 + q2
+                            monthlyQuota = total.toString()
                             lifecycleScope.launch {
                                 val settings = database.settingsDao().getSettings() ?: AppSettings()
-                                database.settingsDao().saveSettings(settings.copy(monthlyQuotaGb = quota))
+                                database.settingsDao().saveSettings(settings.copy(
+                                    monthlyQuotaGb = total,
+                                    sim1QuotaGb = q1,
+                                    sim2QuotaGb = q2
+                                ))
                             }
                         }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                        Text("Enregistrer le quota")
+                        Text("Enregistrer les quotas")
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Speed monitor toggle
+                    Button(
+                        onClick = {
+                            val intent = Intent(this@MainActivity, SpeedMonitorService::class.java)
+                            if (speedMonitorActive) {
+                                stopService(intent)
+                                speedMonitorActive = false
+                            } else {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    startForegroundService(intent)
+                                } else {
+                                    startService(intent)
+                                }
+                                speedMonitorActive = true
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = if (speedMonitorActive)
+                            ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                        else
+                            ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text(if (speedMonitorActive) "Arreter moniteur de debit" else "Activer moniteur de debit")
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -432,6 +531,52 @@ fun StatsCard(title: String, value: String, modifier: Modifier = Modifier) {
             Text(text = title, style = MaterialTheme.typography.labelLarge)
             Spacer(modifier = Modifier.height(8.dp))
             Text(text = value, style = MaterialTheme.typography.headlineSmall)
+        }
+    }
+}
+
+@Composable
+fun SimQuotaCard(
+    title: String,
+    todayBytes: Long,
+    dailyQuotaGb: Double,
+    quotaGbStr: String,
+    containerColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val dailyQuotaBytes = (dailyQuotaGb * 1024.0 * 1024.0 * 1024.0).toLong()
+    val progress = if (dailyQuotaBytes > 0) (todayBytes.toFloat() / dailyQuotaBytes).coerceIn(0f, 1f) else 0f
+    val color = when {
+        progress >= 1f -> Color.Red
+        progress >= 0.8f -> Color(0xFFFF9800)
+        else -> Color(0xFF4CAF50)
+    }
+    Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = containerColor)) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "Quota: ${String.format(Locale.getDefault(), "%.2f", dailyQuotaGb)} Go",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text(
+                DataUsageManager.humanReadable(todayBytes),
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.fillMaxWidth().height(6.dp),
+                color = color,
+            )
+            Text(
+                "Mensuel: ${quotaGbStr} Go",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            if (progress >= 1f) {
+                Text("Quota atteint", color = Color.Red, style = MaterialTheme.typography.labelSmall)
+            }
         }
     }
 }

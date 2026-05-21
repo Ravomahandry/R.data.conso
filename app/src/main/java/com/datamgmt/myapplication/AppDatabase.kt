@@ -7,6 +7,8 @@ import androidx.room.*
 data class AppSettings(
     @PrimaryKey val id: Int = 1,
     val monthlyQuotaGb: Double = 4.5,
+    val sim1QuotaGb: Double = 4.5,
+    val sim2QuotaGb: Double = 4.5,
     val currentUsageBytes: Long = 0L,
     val lastCheckTime: Long = System.currentTimeMillis()
 )
@@ -59,7 +61,7 @@ interface SimulationDao {
     suspend fun insert(sim: SimulationEntry)
 }
 
-@Database(entities = [AppSettings::class, HistoryEntry::class, SimulationEntry::class], version = 2, exportSchema = false)
+@Database(entities = [AppSettings::class, HistoryEntry::class, SimulationEntry::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun settingsDao(): SettingsDao
     abstract fun historyDao(): HistoryDao

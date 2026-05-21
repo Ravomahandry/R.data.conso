@@ -1,7 +1,11 @@
 package com.datamgmt.myapplication
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.telephony.SubscriptionManager
+import android.telephony.TelephonyManager
+import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import java.text.SimpleDateFormat
@@ -20,53 +24,77 @@ class UsageWorker2(
         val settingsDao = database.settingsDao()
         val historyDao = database.historyDao()
 
-        // 1. Récupérer la consommation du jour et du mois
+        val settings = settingsDao.getSettings() ?: AppSettings()
+
+        val calendar = Calendar.getInstance()
+        val remainingDays = calendar.getActualMaximum(Calendar.DAY_OF_MONTH) - calendar.get(Calendar.DAY_OF_MONTH) + 1
+
+        // Global usage
         val todayBytes = usageManager.getMobileUsageToday()
         val todayGb = todayBytes / (1024.0 * 1024.0 * 1024.0)
         val monthBytes = usageManager.getMobileUsageThisMonth()
         val monthGb = monthBytes / (1024.0 * 1024.0 * 1024.0)
-
-        // 2. Récupérer le quota configuré
-        val settings = settingsDao.getSettings() ?: AppSettings()
-
-        // Calculer le quota journalier avec report automatique :
-        // quota journalier = (quota mensuel - conso du mois AVANT aujourd'hui) / jours restants
-        // Si non consommé les jours précédents, le surplus est réparti sur les jours restants
-        val calendar = Calendar.getInstance()
-        val remainingDays = calendar.getActualMaximum(Calendar.DAY_OF_MONTH) - calendar.get(Calendar.DAY_OF_MONTH) + 1
-        val usedBeforeToday = monthGb - todayGb
+        val usedBeforeToday = (monthGb - todayGb).coerceAtLeast(0.0)
         val dailyQuotaGb = QuotaCalculator.calculateDailyQuota(
             settings.monthlyQuotaGb,
-            usedBeforeToday.coerceAtLeast(0.0),
+            usedBeforeToday,
             remainingDays
         )
 
-        // 3. Logique de blocage VPN : si quota journalier atteint, bloquer immédiatement
+        // Per-SIM quota checking
+        var anySimOverQuota = false
+        val subscriberIds = getSubscriberIds(context)
+        if (subscriberIds.isNotEmpty()) {
+            for ((index, subId) in subscriberIds.withIndex()) {
+                val simQuota = if (index == 0) settings.sim1QuotaGb else settings.sim2QuotaGb
+                val simTodayBreakdown = usageManager.getUsageBreakdownForPeriod(DataUsageManager.PeriodType.DAILY, subId)
+                val simMonthBreakdown = usageManager.getUsageBreakdownForPeriod(DataUsageManager.PeriodType.MONTHLY, subId)
+                val simTodayGb = simTodayBreakdown.totalBytes / (1024.0 * 1024.0 * 1024.0)
+                val simMonthGb = simMonthBreakdown.totalBytes / (1024.0 * 1024.0 * 1024.0)
+                val simUsedBefore = (simMonthGb - simTodayGb).coerceAtLeast(0.0)
+                val simDailyQuota = QuotaCalculator.calculateDailyQuota(simQuota, simUsedBefore, remainingDays)
+                if (simDailyQuota > 0 && simTodayGb >= simDailyQuota) {
+                    anySimOverQuota = true
+                }
+
+                // Save per-SIM history
+                val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                val dateLabel = sdf.format(System.currentTimeMillis())
+                historyDao.insert(HistoryEntry(
+                    timestamp = System.currentTimeMillis(),
+                    dateLabel = dateLabel,
+                    simId = "SIM${index + 1}",
+                    bytes = simTodayBreakdown.totalBytes
+                ))
+            }
+        }
+
+        // VPN blocking: activate if global or any SIM quota exceeded
         val intent = Intent(context, VpnBlockService::class.java)
-        if (dailyQuotaGb > 0 && todayGb >= dailyQuotaGb) {
+        val globalOverQuota = dailyQuotaGb > 0 && todayGb >= dailyQuotaGb
+        if (globalOverQuota || anySimOverQuota) {
             context.startService(intent)
         } else {
             context.stopService(intent)
         }
 
-        // 4. Sauvegarder la conso actuelle en base pour l'UI
+        // Save settings
         settingsDao.saveSettings(settings.copy(
             currentUsageBytes = monthBytes,
             lastCheckTime = System.currentTimeMillis()
         ))
 
-        // 5. Enregistrer historique journalier
+        // Save global history
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
         val dateLabel = sdf.format(System.currentTimeMillis())
-        val entry = HistoryEntry(
+        historyDao.insert(HistoryEntry(
             timestamp = System.currentTimeMillis(),
             dateLabel = dateLabel,
             simId = "TOTAL",
             bytes = todayBytes
-        )
-        historyDao.insert(entry)
+        ))
 
-        // 6. Notifications seuils 50/80/100% du quota mensuel
+        // Threshold notifications (global)
         val quotaBytes = (settings.monthlyQuotaGb * 1024.0 * 1024.0 * 1024.0).toLong()
         if (quotaBytes > 0L) {
             val percent = (monthBytes * 100) / quotaBytes
@@ -77,5 +105,30 @@ class UsageWorker2(
         }
 
         return Result.success()
+    }
+
+    @SuppressLint("HardwareIds", "MissingPermission")
+    private fun getSubscriberIds(context: Context): List<String> {
+        if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_PHONE_STATE)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            return emptyList()
+        }
+        return try {
+            val subManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
+            val subs = subManager.activeSubscriptionInfoList ?: return emptyList()
+            subs.take(2).map { sub ->
+                try {
+                    val tm = (context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager)
+                        .createForSubscriptionId(sub.subscriptionId)
+                    tm.subscriberId?.takeIf { it.isNotBlank() }
+                        ?: sub.iccId
+                        ?: sub.subscriptionId.toString()
+                } catch (e: Exception) {
+                    sub.iccId ?: sub.subscriptionId.toString()
+                }
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 }
