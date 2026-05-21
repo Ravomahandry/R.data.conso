@@ -1,10 +1,12 @@
 package com.datamgmt.myapplication
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
+import android.os.Build
 import android.os.Bundle
 import android.os.Process
 import android.provider.Settings
@@ -12,6 +14,7 @@ import android.telephony.SubscriptionInfo
 import android.telephony.TelephonyManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -43,6 +46,12 @@ import java.util.concurrent.TimeUnit
 @OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
 
+    private val vpnLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            startService(Intent(this, VpnBlockService::class.java))
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -50,21 +59,24 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val usageManager = DataUsageManager(this)
-            var monthlyQuota by remember { mutableStateOf("30") }
+            var monthlyQuota by remember { mutableStateOf("4.5") }
             var settingsLoaded by remember { mutableStateOf(false) }
             var hasUsageStatsPermission by remember { mutableStateOf(checkUsageStatsPermission()) }
             var hasReadPhoneState by remember { mutableStateOf(false) }
 
             val subscriptions = remember { mutableStateListOf<com.datamgmt.myapplication.SubscriptionInfoWrapper>() }
-            var selectedSimIndex by remember { mutableStateOf(0) }
+            var selectedSimIndex by remember { mutableIntStateOf(0) }
             var selectedPeriod by remember { mutableStateOf(DataUsageManager.PeriodType.DAILY) }
-            var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+            var selectedDateMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
             var showDatePicker by remember { mutableStateOf(false) }
-            var uploadBytes by remember { mutableStateOf(0L) }
-            var downloadBytes by remember { mutableStateOf(0L) }
+            var uploadBytes by remember { mutableLongStateOf(0L) }
+            var downloadBytes by remember { mutableLongStateOf(0L) }
             var sim1Usage by remember { mutableStateOf(DataUsageManager.UsageBreakdown()) }
             var sim2Usage by remember { mutableStateOf(DataUsageManager.UsageBreakdown()) }
             var combinedUsage by remember { mutableStateOf(DataUsageManager.UsageBreakdown()) }
+            var dailyQuotaGb by remember { mutableDoubleStateOf(0.0) }
+            var todayUsageBytes by remember { mutableLongStateOf(0L) }
+            var monthUsageBytes by remember { mutableLongStateOf(0L) }
             val dateFormatter = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()) }
 
             val database = AppDatabase.getDatabase(this)
@@ -80,6 +92,13 @@ class MainActivity : ComponentActivity() {
                     ActivityCompat.requestPermissions(this@MainActivity, arrayOf(Manifest.permission.READ_PHONE_STATE), 101)
                 } else {
                     hasReadPhoneState = true
+                }
+
+                // Request notification permission on Android 13+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        ActivityCompat.requestPermissions(this@MainActivity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 102)
+                    }
                 }
 
                 // load subscriptions
@@ -134,6 +153,20 @@ class MainActivity : ComponentActivity() {
                     combinedUsage = combined
                     downloadBytes = selectedUsage.downloadBytes
                     uploadBytes = selectedUsage.uploadBytes
+
+                    // Calculate daily quota with rollover
+                    val todayB = usageManager.getMobileUsageToday()
+                    val monthB = usageManager.getMobileUsageThisMonth()
+                    todayUsageBytes = todayB
+                    monthUsageBytes = monthB
+                    val todayGb = todayB / (1024.0 * 1024.0 * 1024.0)
+                    val monthGb = monthB / (1024.0 * 1024.0 * 1024.0)
+                    val quota = monthlyQuota.toDoubleOrNull() ?: 4.5
+                    val cal = java.util.Calendar.getInstance()
+                    val remaining = cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH) - cal.get(java.util.Calendar.DAY_OF_MONTH) + 1
+                    val usedBefore = (monthGb - todayGb).coerceAtLeast(0.0)
+                    dailyQuotaGb = QuotaCalculator.calculateDailyQuota(quota, usedBefore, remaining)
+
                     delay(15_000)
                 }
             }
@@ -246,6 +279,46 @@ class MainActivity : ComponentActivity() {
 
                     Spacer(modifier = Modifier.height(16.dp))
 
+                    // Daily quota card with progress
+                    val dailyQuotaBytes = (dailyQuotaGb * 1024.0 * 1024.0 * 1024.0).toLong()
+                    val dailyProgress = if (dailyQuotaBytes > 0) (todayUsageBytes.toFloat() / dailyQuotaBytes).coerceIn(0f, 1f) else 0f
+                    val progressColor = when {
+                        dailyProgress >= 1f -> Color.Red
+                        dailyProgress >= 0.8f -> Color(0xFFFF9800)
+                        else -> Color(0xFF4CAF50)
+                    }
+                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text("Quota journalier", style = MaterialTheme.typography.titleMedium)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Utilisé aujourd'hui")
+                                Text(DataUsageManager.humanReadable(todayUsageBytes))
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Quota du jour")
+                                Text(String.format(Locale.getDefault(), "%.2f Go", dailyQuotaGb))
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                progress = { dailyProgress },
+                                modifier = Modifier.fillMaxWidth().height(8.dp),
+                                color = progressColor,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Consommation mensuelle")
+                                Text("${DataUsageManager.humanReadable(monthUsageBytes)} / ${String.format(Locale.getDefault(), "%.1f Go", monthlyQuota.toDoubleOrNull() ?: 4.5)}")
+                            }
+                            if (dailyProgress >= 1f) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Quota journalier atteint — Blocage VPN actif", color = Color.Red, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
                     // Stats cards
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         StatsCard(title = "Download", value = DataUsageManager.humanReadable(downloadBytes), modifier = Modifier.weight(1f))
@@ -276,7 +349,7 @@ class MainActivity : ComponentActivity() {
 
                     Button(
                         onClick = {
-                            val quota = monthlyQuota.toDoubleOrNull() ?: 30.0
+                            val quota = monthlyQuota.toDoubleOrNull() ?: 4.5
                             lifecycleScope.launch {
                                 val settings = database.settingsDao().getSettings() ?: AppSettings()
                                 database.settingsDao().saveSettings(settings.copy(monthlyQuotaGb = quota))
@@ -296,9 +369,9 @@ class MainActivity : ComponentActivity() {
                     Button(onClick = {
                         val vpnIntent = VpnService.prepare(this@MainActivity)
                         if (vpnIntent != null) {
-                            startActivityForResult(vpnIntent, 0)
+                            vpnLauncher.launch(vpnIntent)
                         } else {
-                            onActivityResult(0, RESULT_OK, null)
+                            startService(Intent(this@MainActivity, VpnBlockService::class.java))
                         }
                     }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                         Text(getString(R.string.enable_vpn_protection))
@@ -323,6 +396,7 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    @SuppressLint("HardwareIds", "MissingPermission")
     private fun resolveSubscriberId(subscriptionInfo: SubscriptionInfo): String {
         return try {
             val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
@@ -337,12 +411,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode == RESULT_OK) {
-            startService(Intent(this, VpnBlockService::class.java))
-        }
-    }
 }
 
 // Small UI helpers

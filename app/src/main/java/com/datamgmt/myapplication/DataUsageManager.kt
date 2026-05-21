@@ -1,10 +1,13 @@
 package com.datamgmt.myapplication
 
+import android.Manifest
 import android.app.usage.NetworkStatsManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.telephony.SubscriptionInfo
 import android.telephony.SubscriptionManager
+import androidx.core.content.ContextCompat
 import java.util.*
 
 class DataUsageManager(
@@ -24,6 +27,18 @@ class DataUsageManager(
     fun getMobileUsageToday(): Long {
         val calendar = Calendar.getInstance()
         calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        val startTime = calendar.timeInMillis
+        val endTime = System.currentTimeMillis()
+        return getUsageForRange(startTime, endTime)
+    }
+
+    fun getMobileUsageThisMonth(): Long {
+        val calendar = Calendar.getInstance()
+        calendar.set(Calendar.DAY_OF_MONTH, 1)
+        setStartOfDay(calendar)
         val startTime = calendar.timeInMillis
         val endTime = System.currentTimeMillis()
         return getUsageForRange(startTime, endTime)
@@ -107,6 +122,9 @@ class DataUsageManager(
 
     fun getActiveSubscriptions(): List<SubscriptionInfo> {
         return try {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+                return emptyList()
+            }
             val manager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
             manager.activeSubscriptionInfoList ?: emptyList()
         } catch (e: Exception) {
@@ -128,9 +146,9 @@ class DataUsageManager(
             val gb = mb * 1024.0
             val d = bytes.toDouble()
             return when {
-                d >= gb -> String.format("%.2f Go", d / gb)
-                d >= mb -> String.format("%.2f Mo", d / mb)
-                else -> String.format("%.2f Ko", d / kb)
+                d >= gb -> String.format(Locale.getDefault(), "%.2f Go", d / gb)
+                d >= mb -> String.format(Locale.getDefault(), "%.2f Mo", d / mb)
+                else -> String.format(Locale.getDefault(), "%.2f Ko", d / kb)
             }
         }
     }

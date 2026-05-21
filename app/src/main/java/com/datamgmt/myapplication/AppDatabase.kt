@@ -6,7 +6,7 @@ import androidx.room.*
 @Entity(tableName = "app_settings")
 data class AppSettings(
     @PrimaryKey val id: Int = 1,
-    val monthlyQuotaGb: Double = 30.0,
+    val monthlyQuotaGb: Double = 4.5,
     val currentUsageBytes: Long = 0L,
     val lastCheckTime: Long = System.currentTimeMillis()
 )

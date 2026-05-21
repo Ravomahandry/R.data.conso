@@ -1,12 +1,16 @@
 package com.datamgmt.myapplication
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import java.util.Locale
 
 class NotificationHelper(private val context: Context) {
 
@@ -35,7 +39,7 @@ class NotificationHelper(private val context: Context) {
             else -> "Consommation"
         }
         val used = DataUsageManager.humanReadable(usedBytes)
-        val text = "Quota: ${String.format("%.1f Go", quotaGb)} — Utilisé: $used ($percent%)"
+        val text = "Quota: ${String.format(Locale.getDefault(), "%.1f Go", quotaGb)} — Utilisé: $used ($percent%)"
 
         val intent = Intent(context, MainActivity::class.java)
         val pi = PendingIntent.getActivity(context, percent, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -48,6 +52,11 @@ class NotificationHelper(private val context: Context) {
             .setAutoCancel(true)
             .build()
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                return
+            }
+        }
         nm.notify(percent, n)
     }
 }
