@@ -6,12 +6,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import java.util.Locale
 
 @Composable
 fun SimulationScreen() {
-    var quota by remember { mutableStateOf(30.0) }
-    var currentUsage by remember { mutableStateOf(5.0) }
-    var daysLeft by remember { mutableStateOf(15) }
+    var quota by remember { mutableDoubleStateOf(30.0) }
+    var currentUsage by remember { mutableDoubleStateOf(5.0) }
+    var daysLeft by remember { mutableIntStateOf(15) }
 
     val dataRemaining = quota - currentUsage
     val suggestedDaily = if (daysLeft > 0) dataRemaining / daysLeft else dataRemaining
@@ -31,9 +32,9 @@ fun SimulationScreen() {
         Spacer(modifier = Modifier.height(16.dp))
         Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation()) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Text("Quota journalier conseillé: ${String.format("%.2f Go", suggestedDaily)}")
-                Text("Estimation fin de mois: ${String.format("%.2f Go", estimatedEnd)}")
-                Text("Data restante: ${String.format("%.2f Go", dataRemaining)}")
+                Text("Quota journalier conseillé: ${String.format(Locale.getDefault(), "%.2f Go", suggestedDaily)}")
+                Text("Estimation fin de mois: ${String.format(Locale.getDefault(), "%.2f Go", estimatedEnd)}")
+                Text("Data restante: ${String.format(Locale.getDefault(), "%.2f Go", dataRemaining)}")
                 Text("Statut: $risk")
             }
         }

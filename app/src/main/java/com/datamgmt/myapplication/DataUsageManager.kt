@@ -1,10 +1,13 @@
 package com.datamgmt.myapplication
 
+import android.Manifest
 import android.app.usage.NetworkStatsManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.telephony.SubscriptionInfo
 import android.telephony.SubscriptionManager
+import androidx.core.content.ContextCompat
 import java.util.*
 
 class DataUsageManager(
@@ -107,6 +110,9 @@ class DataUsageManager(
 
     fun getActiveSubscriptions(): List<SubscriptionInfo> {
         return try {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+                return emptyList()
+            }
             val manager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
             manager.activeSubscriptionInfoList ?: emptyList()
         } catch (e: Exception) {
@@ -128,9 +134,9 @@ class DataUsageManager(
             val gb = mb * 1024.0
             val d = bytes.toDouble()
             return when {
-                d >= gb -> String.format("%.2f Go", d / gb)
-                d >= mb -> String.format("%.2f Mo", d / mb)
-                else -> String.format("%.2f Ko", d / kb)
+                d >= gb -> String.format(Locale.getDefault(), "%.2f Go", d / gb)
+                d >= mb -> String.format(Locale.getDefault(), "%.2f Mo", d / mb)
+                else -> String.format(Locale.getDefault(), "%.2f Ko", d / kb)
             }
         }
     }

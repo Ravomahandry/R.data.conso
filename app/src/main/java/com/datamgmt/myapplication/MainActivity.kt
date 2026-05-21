@@ -1,10 +1,12 @@
 package com.datamgmt.myapplication
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
+import android.os.Build
 import android.os.Bundle
 import android.os.Process
 import android.provider.Settings
@@ -12,6 +14,7 @@ import android.telephony.SubscriptionInfo
 import android.telephony.TelephonyManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -43,6 +46,12 @@ import java.util.concurrent.TimeUnit
 @OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
 
+    private val vpnLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            startService(Intent(this, VpnBlockService::class.java))
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -56,12 +65,12 @@ class MainActivity : ComponentActivity() {
             var hasReadPhoneState by remember { mutableStateOf(false) }
 
             val subscriptions = remember { mutableStateListOf<com.datamgmt.myapplication.SubscriptionInfoWrapper>() }
-            var selectedSimIndex by remember { mutableStateOf(0) }
+            var selectedSimIndex by remember { mutableIntStateOf(0) }
             var selectedPeriod by remember { mutableStateOf(DataUsageManager.PeriodType.DAILY) }
-            var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+            var selectedDateMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
             var showDatePicker by remember { mutableStateOf(false) }
-            var uploadBytes by remember { mutableStateOf(0L) }
-            var downloadBytes by remember { mutableStateOf(0L) }
+            var uploadBytes by remember { mutableLongStateOf(0L) }
+            var downloadBytes by remember { mutableLongStateOf(0L) }
             var sim1Usage by remember { mutableStateOf(DataUsageManager.UsageBreakdown()) }
             var sim2Usage by remember { mutableStateOf(DataUsageManager.UsageBreakdown()) }
             var combinedUsage by remember { mutableStateOf(DataUsageManager.UsageBreakdown()) }
@@ -80,6 +89,13 @@ class MainActivity : ComponentActivity() {
                     ActivityCompat.requestPermissions(this@MainActivity, arrayOf(Manifest.permission.READ_PHONE_STATE), 101)
                 } else {
                     hasReadPhoneState = true
+                }
+
+                // Request notification permission on Android 13+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        ActivityCompat.requestPermissions(this@MainActivity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 102)
+                    }
                 }
 
                 // load subscriptions
@@ -296,9 +312,9 @@ class MainActivity : ComponentActivity() {
                     Button(onClick = {
                         val vpnIntent = VpnService.prepare(this@MainActivity)
                         if (vpnIntent != null) {
-                            startActivityForResult(vpnIntent, 0)
+                            vpnLauncher.launch(vpnIntent)
                         } else {
-                            onActivityResult(0, RESULT_OK, null)
+                            startService(Intent(this@MainActivity, VpnBlockService::class.java))
                         }
                     }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                         Text(getString(R.string.enable_vpn_protection))
@@ -323,6 +339,7 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    @SuppressLint("HardwareIds", "MissingPermission")
     private fun resolveSubscriberId(subscriptionInfo: SubscriptionInfo): String {
         return try {
             val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
@@ -337,12 +354,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode == RESULT_OK) {
-            startService(Intent(this, VpnBlockService::class.java))
-        }
-    }
 }
 
 // Small UI helpers
