@@ -1,0 +1,21 @@
+# Android
+.gradle/
+build/
+app/build/
+
+# APK
+*.apk
+
+# Android Studio
+.idea/
+*.iml
+
+# Kotlin
+.kotlin/
+
+# Local config
+local.properties
+
+# Logs
+*.log
+ksp-debug.log
