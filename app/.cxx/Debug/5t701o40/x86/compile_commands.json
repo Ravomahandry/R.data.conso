@@ -1,0 +1,7 @@
+[
+{
+  "directory": "D:/LifeBook/Arvo/app/.cxx/Debug/5t701o40/x86",
+  "command": "C:\\Users\\Ravo\\AppData\\Local\\Android\\Sdk\\ndk\\27.2.12479018\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang++.exe --target=i686-none-linux-android26 --sysroot=C:/Users/Ravo/AppData/Local/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/windows-x86_64/sysroot -Darvo_native_EXPORTS -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -fPIC -o CMakeFiles\\arvo_native.dir\\native-lib.cpp.o -c D:\\LifeBook\\Arvo\\app\\src\\main\\cpp\\native-lib.cpp",
+  "file": "D:\\LifeBook\\Arvo\\app\\src\\main\\cpp\\native-lib.cpp"
+}
+]

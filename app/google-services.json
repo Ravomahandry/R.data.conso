@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "464448899885",
+    "firebase_url": "https://arvo-4417d-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "arvo-4417d",
+    "storage_bucket": "arvo-4417d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:464448899885:android:07b623fda7f1897dc421a4",
+        "android_client_info": {
+          "package_name": "io.arvo.dataconso"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA61uZ_CPgRFN6tC_CbmQZ69_oQWWoD9uc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,1 @@
+-keep,allowobfuscation,allowshrinking class io.arvo.dataconso.MainViewModel
