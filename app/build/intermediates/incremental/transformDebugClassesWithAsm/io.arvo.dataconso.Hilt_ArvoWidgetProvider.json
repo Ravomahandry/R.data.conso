@@ -1,0 +1,1 @@
+{"className":"io.arvo.dataconso.Hilt_ArvoWidgetProvider","classAnnotations":[],"interfaces":[],"superClasses":["android.appwidget.AppWidgetProvider","android.content.BroadcastReceiver","java.lang.Object"]}

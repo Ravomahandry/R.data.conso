@@ -1,0 +1,2 @@
+ninja: Entering directory `D:\LifeBook\Arvo\app\.cxx\Debug\5t701o40\armeabi-v7a'
+ninja: no work to do.

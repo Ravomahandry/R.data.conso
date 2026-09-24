@@ -1,3 +1,16 @@
 # Default ignored files
 /shelf/
 /workspace.xml
+
+# Android
+/build/
+/app/build/
+ 
+# APK
+*.apk
+ 
+# Logs
+*.log
+ 
+# Local config
+local.properties
