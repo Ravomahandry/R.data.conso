@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import androidx.room.*
 import io.arvo.dataconso.BuildConfig
+import net.sqlcipher.database.SupportFactory
+import net.sqlcipher.database.SQLiteDatabase
 
 @Entity(tableName = "app_settings")
 data class AppSettings(
@@ -143,25 +145,19 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = try {
-                    buildDatabase(context).also { db ->
-                        db.openHelper.writableDatabase
-                    }
-                } catch (e: Throwable) {
-                    Log.e("ARVO_DB", "Encryption error", e)
-                    // En cas d'erreur fatale de clé, on repart à zéro
-                    context.deleteDatabase(DB_NAME)
-                    buildDatabase(context)
-                }
+                val instance = buildDatabase(context)
                 INSTANCE = instance
                 instance
             }
         }
 
         private fun buildDatabase(context: Context): AppDatabase {
+            val passphrase = SQLiteDatabase.getBytes("ARVO_SECURE_PASSPHRASE_KEY_V5".toCharArray())
+            val factory = SupportFactory(passphrase)
+
             return Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, DB_NAME)
-                  .addMigrations(MIGRATION_31_32)
-                  .fallbackToDestructiveMigration()
+                .openHelperFactory(factory)
+                .addMigrations(MIGRATION_31_32)
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .enableMultiInstanceInvalidation()
                 .setQueryCallback({ sqlQuery, _ ->
@@ -169,7 +165,6 @@ abstract class AppDatabase : RoomDatabase() {
                          Log.d("ARVO_DB_PERF", "Query: $sqlQuery")
                     }
                 }, java.util.concurrent.Executors.newSingleThreadExecutor())
-                // .fallbackToDestructiveMigration() // SUPPRIMÉ POUR SÉCURITÉ PROD
                 .build()
         }
     }
