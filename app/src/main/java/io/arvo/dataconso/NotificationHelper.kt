@@ -56,14 +56,16 @@ class NotificationHelper(private val context: Context) {
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                return
-            }
-        }
-        
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(percent + 1000, n)
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            nm.notify(percent + 1000, n)
+        }
         firedMap[percent] = today
     }
 }

@@ -1,6 +1,7 @@
 package io.arvo.dataconso
 
 import android.annotation.SuppressLint
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -9,6 +10,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.graphics.PixelFormat
 import android.net.ConnectivityManager
 import android.net.Network
@@ -27,6 +29,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import dagger.hilt.android.AndroidEntryPoint
 import io.arvo.dataconso.network.DnsResolver
 import io.arvo.dataconso.network.RealPacketInterceptor
@@ -100,11 +103,12 @@ class VpnBlockService : VpnService() {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction("io.arvo.dataconso.APP_CHANGED")
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(screenReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(screenReceiver, filter)
-        }
+        ContextCompat.registerReceiver(
+            this,
+            screenReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         registerNetworkCallback()
     }
@@ -661,7 +665,15 @@ class VpnBlockService : VpnService() {
     }
 
     private fun updateNotification(title: String, msg: String) {
-        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(notificationId, buildNotification(title, msg))
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+                .notify(notificationId, buildNotification(title, msg))
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

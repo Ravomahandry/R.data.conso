@@ -10,7 +10,7 @@ import androidx.work.WorkManager
 
 import android.app.ActivityManager
 import android.content.IntentFilter
-import android.os.Build
+import androidx.core.content.ContextCompat
 import com.google.firebase.FirebaseApp
 
 @HiltAndroidApp
@@ -42,11 +42,12 @@ class ArvoApplication : Application(), Configuration.Provider {
         // Sommité : Synchronisation Multi-processus des données temps réel
         if (isMainProcess()) {
             val filter = IntentFilter("io.arvo.dataconso.SYNC_REALTIME")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(RealTimeData.SyncReceiver(), filter, RECEIVER_NOT_EXPORTED)
-            } else {
-                registerReceiver(RealTimeData.SyncReceiver(), filter)
-            }
+            ContextCompat.registerReceiver(
+                this,
+                RealTimeData.SyncReceiver(),
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
         }
 
         // Sommité : Chargement des bibliothèques SQLCipher avant tout accès BDD
