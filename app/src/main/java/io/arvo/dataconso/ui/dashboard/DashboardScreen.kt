@@ -28,10 +28,17 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.arvo.dataconso.*
 import io.arvo.dataconso.R
 import io.arvo.dataconso.ui.*
+import io.arvo.dataconso.ui.hotspot.HotspotHistoryViewModel
+import io.arvo.dataconso.ui.hotspot.HotspotHistoryState
+import io.arvo.dataconso.ui.hotspot.formatDuration
+import io.arvo.dataconso.util.FormatUtils
+import java.text.DateFormat
+import java.util.Date
 
 @Composable
 fun DashboardScreen(
-    colors: DataConsColors
+    colors: DataConsColors,
+    onOpenHotspotHistory: () -> Unit
 ) {
     val context = LocalContext.current
     val formatter = remember { DataUsageManager(context) }
@@ -45,6 +52,8 @@ fun DashboardScreen(
     val fastState by mainVm.realtimeState.collectAsStateWithLifecycle()
     val slowState by mainVm.analysisState.collectAsStateWithLifecycle()
     val uiState by mainVm.uiState.collectAsStateWithLifecycle()
+    val hotspotViewModel: HotspotHistoryViewModel = hiltViewModel()
+    val hotspotState by hotspotViewModel.uiState.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -80,6 +89,13 @@ fun DashboardScreen(
         }
         Spacer(modifier = Modifier.height(12.dp))
         GranularitySelector(currentGranularity, { mainVm.setGranularity(it) }, colors)
+
+        Spacer(modifier = Modifier.height(16.dp))
+        HotspotCard(
+            state = hotspotState,
+            colors = colors,
+            onClick = onOpenHotspotHistory
+        )
         
         Spacer(modifier = Modifier.height(32.dp))
 
@@ -182,6 +198,92 @@ fun DashboardScreen(
         }
         
         Spacer(modifier = Modifier.height(100.dp))
+    }
+}
+
+@Composable
+private fun HotspotCard(
+    state: HotspotHistoryState,
+    colors: DataConsColors,
+    onClick: () -> Unit
+) {
+    GlassCardSommite(colors = colors, onClick = onClick) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Rounded.WifiTethering,
+                contentDescription = null,
+                tint = if (state.isHotspotActive) Color(0xFF10B981) else colors.primary,
+                modifier = Modifier.size(28.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.hotspot_title),
+                    fontWeight = FontWeight.Bold,
+                    color = colors.onSurface
+                )
+                Text(
+                    stringResource(
+                        if (state.isHotspotActive) R.string.hotspot_status_active
+                        else R.string.hotspot_status_inactive
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurface.copy(alpha = 0.7f)
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    FormatUtils.formatHotspotDataSize(state.today.totalBytes),
+                    fontWeight = FontWeight.Black,
+                    color = colors.primary
+                )
+                Text(
+                    stringResource(R.string.hotspot_session_count, state.today.sessionCount),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurface.copy(alpha = 0.7f)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        val current = state.currentSession
+        Text(
+            stringResource(
+                R.string.hotspot_dashboard_session_details,
+                current?.let {
+                    DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it.startTimestamp))
+                } ?: stringResource(R.string.hotspot_unknown),
+                current?.let {
+                    formatDuration(
+                        (System.currentTimeMillis() - it.startTimestamp)
+                            .coerceAtLeast(it.durationMillis)
+                    )
+                } ?: "—",
+                current?.let { FormatUtils.formatHotspotDataSize(it.totalBytes) } ?: "0 B",
+                state.connectedDeviceCount?.toString()
+                    ?: stringResource(R.string.hotspot_devices_unavailable),
+                state.lastSyncTimestamp?.let {
+                    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it))
+                } ?: stringResource(R.string.hotspot_never_synced)
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurface.copy(alpha = 0.75f),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+        )
+        Text(
+            stringResource(
+                R.string.hotspot_dashboard_forecast_details,
+                FormatUtils.formatHotspotDataSize(state.forecast.remainingBytes),
+                FormatUtils.formatHotspotDataSize(state.forecast.projectedPeriodEndBytes),
+                state.healthScore.score,
+                stringResource(R.string.hotspot_measurement_unavailable)
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurface.copy(alpha = 0.75f),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
     }
 }
 

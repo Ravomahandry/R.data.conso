@@ -31,5 +31,5 @@ echo Please reload Android Studio or set JAVA_HOME.
 exit /b 1
 
 :execute
-@emit the execution
+@echo Starting Gradle...
 "%JAVA_EXE%" %DEFAULT_JVM_OPTS% -Dorg.gradle.appname="%APP_BASE_NAME%" -classpath "%APP_HOME%\gradle\wrapper\gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain %*

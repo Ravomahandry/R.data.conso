@@ -5,6 +5,19 @@ import io.arvo.dataconso.R
 import java.util.Locale
 
 object FormatUtils {
+
+    fun formatHotspotDataSize(bytes: Long): String {
+        val value = bytes.coerceAtLeast(0)
+        return when {
+            value >= 1_073_741_824L ->
+                "${String.format(Locale.getDefault(), "%.1f", value / 1_073_741_824.0)} GB"
+            value >= 1_048_576L ->
+                "${String.format(Locale.getDefault(), "%.1f", value / 1_048_576.0)} MB"
+            value >= 1_024L ->
+                "${String.format(Locale.getDefault(), "%.1f", value / 1_024.0)} KB"
+            else -> "$value B"
+        }
+    }
     
     /**
      * Formats data size (bytes) into a localized string (e.g., "1.5 GB" or "1.5 Go").

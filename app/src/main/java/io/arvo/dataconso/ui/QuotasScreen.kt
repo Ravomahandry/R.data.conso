@@ -32,13 +32,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.accompanist.drawablepainter.rememberDrawablePainter
 import io.arvo.dataconso.*
 import io.arvo.dataconso.R
+import io.arvo.dataconso.domain.usecase.AppQuotaDisplayStatus
 
 @Composable
 fun QuotasScreen(
     uiState: MainViewModel.UiState,
     colors: DataConsColors,
     viewModel: MainViewModel,
-    onToggleVpn: (Boolean, () -> Unit) -> Unit
+    onToggleVpn: (Boolean, () -> Unit) -> Unit,
+    onOpenVpnDiagnostics: () -> Unit
 ) {
     var showAdd by remember { mutableStateOf(false) }
     var editingQuota by remember { mutableStateOf<AppQuotaEntity?>(null) }
@@ -64,13 +66,26 @@ fun QuotasScreen(
                     Row(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         val isActive = settings.appFirewallEnabled
                         val isTunnelActive = uiState.isTunnelActive
-                        val statusColor = if (isActive && isTunnelActive) Color(0xFF10B981) else if (isActive) Color(0xFFF59E0B) else Color.Gray
+                        val blockingStatuses = uiState.appQuotaStatuses.values
+                        val firewallStatusRes = when {
+                            AppQuotaDisplayStatus.ERROR in blockingStatuses -> R.string.firewall_status_error
+                            AppQuotaDisplayStatus.BLOCKING in blockingStatuses -> R.string.app_quota_status_blocking
+                            AppQuotaDisplayStatus.PENDING in blockingStatuses -> R.string.app_quota_status_pending
+                            AppQuotaDisplayStatus.BLOCKED in blockingStatuses || isTunnelActive -> R.string.firewall_status_active
+                            isActive -> R.string.firewall_status_monitoring
+                            else -> R.string.firewall_status_idle
+                        }
+                        val statusColor = when (firewallStatusRes) {
+                            R.string.firewall_status_error -> Color(0xFFDC2626)
+                            R.string.app_quota_status_blocking, R.string.app_quota_status_pending -> Color(0xFFD97706)
+                            R.string.firewall_status_active -> Color(0xFF10B981)
+                            R.string.firewall_status_monitoring -> Color(0xFF2563EB)
+                            else -> Color.Gray
+                        }
                         Box(modifier = Modifier.size(8.dp).background(statusColor, CircleShape))
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = if (isActive && isTunnelActive) stringResource(R.string.firewall_status_active) 
-                                   else if (isActive) stringResource(R.string.firewall_status_initializing) 
-                                   else stringResource(R.string.firewall_status_idle),
+                            text = stringResource(firewallStatusRes),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Black,
                             color = statusColor,
@@ -82,6 +97,13 @@ fun QuotasScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            VpnHealthCard(
+                runtime = uiState.vpnRuntime,
+                onOpenDiagnostics = onOpenVpnDiagnostics
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             if (uiState.appQuotas.isEmpty()) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text(stringResource(R.string.no_quota_active), textAlign = TextAlign.Center, color = colors.onSurface.copy(alpha = 0.5f))
@@ -92,6 +114,8 @@ fun QuotasScreen(
                         val icon = remember(quota.packageName) {
                             try { context.packageManager.getApplicationIcon(quota.packageName) } catch (_: Exception) { null }
                         }
+                        val blockStatus = uiState.appQuotaStatuses[quota.packageName]
+                            ?: AppQuotaDisplayStatus.PENDING
                         GlassCardSommite(colors) {
                             Row(modifier = Modifier.fillMaxWidth().clickable { editingQuota = quota }.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
                                 if (icon != null) {
@@ -101,22 +125,32 @@ fun QuotasScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(quota.appName, fontWeight = FontWeight.Black, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                        
-                                        val isBlocked = quota.isBlocked || quota.isManualBlocked
-                                        if (isBlocked) {
-                                            Surface(
-                                                color = Color.Red.copy(alpha = 0.1f),
-                                                shape = RoundedCornerShape(4.dp),
-                                                modifier = Modifier.padding(end = 8.dp)
-                                            ) {
-                                                Text(
-                                                    "STOP", 
-                                                    color = Color.Red, 
-                                                    style = MaterialTheme.typography.labelSmall, 
-                                                    fontWeight = FontWeight.Black,
-                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                                                )
-                                            }
+                                        val statusLabel = when (blockStatus) {
+                                            AppQuotaDisplayStatus.BLOCKED -> R.string.app_quota_status_blocked
+                                            AppQuotaDisplayStatus.BLOCKING -> R.string.app_quota_status_blocking
+                                            AppQuotaDisplayStatus.PENDING -> R.string.app_quota_status_pending
+                                            AppQuotaDisplayStatus.ERROR -> R.string.app_quota_status_error
+                                            AppQuotaDisplayStatus.MONITORING -> R.string.app_quota_status_monitoring
+                                        }
+                                        val statusColor = when (blockStatus) {
+                                            AppQuotaDisplayStatus.BLOCKED -> Color(0xFFDC2626)
+                                            AppQuotaDisplayStatus.BLOCKING -> Color(0xFFD97706)
+                                            AppQuotaDisplayStatus.PENDING -> Color(0xFF2563EB)
+                                            AppQuotaDisplayStatus.ERROR -> Color(0xFF7F1D1D)
+                                            AppQuotaDisplayStatus.MONITORING -> colors.onSurface.copy(alpha = 0.55f)
+                                        }
+                                        Surface(
+                                            color = statusColor.copy(alpha = 0.1f),
+                                            shape = RoundedCornerShape(4.dp),
+                                            modifier = Modifier.padding(end = 8.dp)
+                                        ) {
+                                            Text(
+                                                stringResource(statusLabel),
+                                                color = statusColor,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Black,
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp)
+                                            )
                                         }
 
                                         Icon(
@@ -134,12 +168,17 @@ fun QuotasScreen(
                                     LinearProgressIndicator(
                                         progress = { progress }, 
                                         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).height(8.dp).clip(CircleShape), 
-                                        color = if (quota.isBlocked || quota.isManualBlocked || progress >= 1f) Color.Red else colors.primary,
+                                        color = if (blockStatus == AppQuotaDisplayStatus.BLOCKED ||
+                                            blockStatus == AppQuotaDisplayStatus.BLOCKING ||
+                                            blockStatus == AppQuotaDisplayStatus.ERROR
+                                        ) Color.Red else colors.primary,
                                         trackColor = colors.onSurface.copy(alpha = 0.1f)
                                     )
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text("${formatter.formatData(quota.usedBytes)} / ${formatter.formatData(quota.quotaBytes)}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                                        if (quota.isManualBlocked) {
+                                        if (blockStatus == AppQuotaDisplayStatus.ERROR) {
+                                            Text(stringResource(R.string.app_quota_status_error), style = MaterialTheme.typography.labelSmall, color = Color.Red, fontWeight = FontWeight.Bold)
+                                        } else if (quota.isManualBlocked) {
                                             Text(stringResource(R.string.firewall_active), style = MaterialTheme.typography.labelSmall, color = Color.Red, fontWeight = FontWeight.Bold)
                                         }
                                     }

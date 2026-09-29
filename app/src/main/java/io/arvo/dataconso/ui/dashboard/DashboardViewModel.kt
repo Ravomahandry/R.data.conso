@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.arvo.dataconso.RealTimeData
 import io.arvo.dataconso.ai.ConsumptionPredictor
 import io.arvo.dataconso.domain.usecase.GetDashboardDataUseCase
+import io.arvo.dataconso.repository.HotspotRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -14,7 +15,8 @@ import javax.inject.Inject
 @HiltViewModel
 class DashboardViewModel @Inject constructor(
     private val getDashboardDataUseCase: GetDashboardDataUseCase,
-    private val consumptionPredictor: ConsumptionPredictor
+    private val consumptionPredictor: ConsumptionPredictor,
+    private val hotspotRepository: HotspotRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DashboardState())
@@ -25,6 +27,26 @@ class DashboardViewModel @Inject constructor(
     init {
         startObservingData()
         observeRealTimeSpeeds()
+        observeHotspot()
+    }
+
+    private fun observeHotspot() {
+        viewModelScope.launch {
+            combine(
+                hotspotRepository.getCurrentSession(),
+                hotspotRepository.getTodayStatistics(),
+                hotspotRepository.getMonthlyStatistics()
+            ) { current, today, month ->
+                DashboardHotspotData(
+                    isActive = current != null,
+                    todayBytes = today.totalBytes,
+                    todaySessions = today.sessionCount,
+                    monthBytes = month.totalBytes
+                )
+            }.collect { hotspot ->
+                _uiState.update { it.copy(hotspot = hotspot) }
+            }
+        }
     }
 
     private fun startObservingData() {

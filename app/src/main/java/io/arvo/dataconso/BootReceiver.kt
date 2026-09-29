@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import io.arvo.dataconso.workers.HotspotMonitorScheduler
 
 @AndroidEntryPoint
 class BootReceiver : BroadcastReceiver() {
@@ -24,6 +25,7 @@ class BootReceiver : BroadcastReceiver() {
         
         // S'assurer que le scheduler est actif dès le boot
         WorkScheduler.schedulePeriodicWork(appContext)
+        HotspotMonitorScheduler.schedule(appContext)
 
         CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
             try {

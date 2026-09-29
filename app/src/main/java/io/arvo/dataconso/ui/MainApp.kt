@@ -30,13 +30,20 @@ import io.arvo.dataconso.ui.dashboard.DashboardScreen
 import io.arvo.dataconso.ui.onboarding.PermissionOnboardingScreen
 import io.arvo.dataconso.ui.onboarding.PermissionViewModel
 import io.arvo.dataconso.ui.settings.GhostModeSettingsScreen
+import io.arvo.dataconso.ui.hotspot.HotspotHistoryScreen
+import io.arvo.dataconso.ui.hotspot.HotspotDashboardScreen
+import io.arvo.dataconso.ui.hotspot.HotspotInsightsScreen
 
 sealed class Screen(val route: String, val labelRes: Int, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     object Dashboard : Screen("dashboard", R.string.nav_dashboard, Icons.Rounded.Dashboard)
+    object Hotspot : Screen("hotspot", R.string.nav_hotspot, Icons.Rounded.WifiTethering)
     object Analysis : Screen("analysis", R.string.nav_analysis, Icons.Rounded.Analytics)
     object Quotas : Screen("quotas", R.string.nav_quotas, Icons.Rounded.SecurityUpdateGood)
     object Settings : Screen("settings", R.string.nav_settings, Icons.Rounded.Settings)
     object GhostMode : Screen("ghost_mode", R.string.ghost_mode_label, Icons.Rounded.Security)
+    object HotspotHistory : Screen("hotspot_history", R.string.hotspot_history_title, Icons.Rounded.History)
+    object HotspotInsights : Screen("hotspot_insights", R.string.hotspot_insights_title, Icons.Rounded.Lightbulb)
+    object VpnDiagnostics : Screen("vpn_diagnostics", R.string.vpn_diagnostics_title, Icons.Rounded.Security)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,11 +56,18 @@ fun MainApp() {
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = androidx.compose.ui.platform.LocalContext.current
     var vpnPromptShown by rememberSaveable { mutableStateOf(false) }
+    var vpnPermissionRequestCount by rememberSaveable { mutableIntStateOf(0) }
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         vpnPromptShown = false
         viewModel.refreshNow()
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.vpnPermissionRequests.collect {
+            vpnPermissionRequestCount++
+        }
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -70,13 +84,14 @@ fun MainApp() {
         settings.onboardingCompleted,
         settings.vpnEnabled,
         settings.appFirewallEnabled,
-        settings.ghostModeEnabled
+        settings.ghostModeEnabled,
+        vpnPermissionRequestCount
     ) {
         val protectionEnabled = settings.vpnEnabled ||
             settings.appFirewallEnabled ||
             settings.ghostModeEnabled
         val prepareIntent = android.net.VpnService.prepare(context)
-        if (settings.onboardingCompleted && protectionEnabled &&
+        if (settings.onboardingCompleted && (protectionEnabled || vpnPermissionRequestCount > 0) &&
             prepareIntent != null && !vpnPromptShown
         ) {
             vpnPromptShown = true
@@ -145,7 +160,13 @@ fun MainApp() {
                                 containerColor = colors.surface.copy(alpha = 0.8f),
                                 tonalElevation = 8.dp
                             ) {
-                                val items = listOf(Screen.Dashboard, Screen.Analysis, Screen.Quotas, Screen.Settings)
+                                val items = listOf(
+                                    Screen.Dashboard,
+                                    Screen.Hotspot,
+                                    Screen.Analysis,
+                                    Screen.Quotas,
+                                    Screen.Settings
+                                )
                                 items.forEach { screen ->
                                     val selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true
                                     NavigationBarItem(
@@ -176,7 +197,24 @@ fun MainApp() {
                         modifier = Modifier.padding(padding)
                     ) {
                         composable(Screen.Dashboard.route) {
-                            DashboardScreen(colors = colors)
+                            DashboardScreen(
+                                colors = colors,
+                                onOpenHotspotHistory = {
+                                    navController.navigate(Screen.Hotspot.route)
+                                }
+                            )
+                        }
+                        composable(Screen.Hotspot.route) {
+                            HotspotDashboardScreen(
+                                onOpenHistory = { navController.navigate(Screen.HotspotHistory.route) },
+                                onOpenInsights = { navController.navigate(Screen.HotspotInsights.route) }
+                            )
+                        }
+                        composable(Screen.HotspotHistory.route) {
+                            HotspotHistoryScreen(onBack = { navController.popBackStack() })
+                        }
+                        composable(Screen.HotspotInsights.route) {
+                            HotspotInsightsScreen(onBack = { navController.popBackStack() })
                         }
                         composable(Screen.Analysis.route) {
                             AnalysisScreen(
@@ -195,7 +233,14 @@ fun MainApp() {
                                 onToggleVpn = { active, action -> 
                                     // Logique simple de toggle VPN (normalement via Permission check)
                                     action()
-                                }
+                                },
+                                onOpenVpnDiagnostics = { navController.navigate(Screen.VpnDiagnostics.route) }
+                            )
+                        }
+                        composable(Screen.VpnDiagnostics.route) {
+                            VpnDiagnosticsScreen(
+                                uiState = uiState,
+                                onBack = { navController.popBackStack() }
                             )
                         }
                         composable(Screen.Settings.route) {

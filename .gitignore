@@ -3,6 +3,7 @@
 build/
 app/build/
 app/.cxx/
+.externalNativeBuild/
 
 # Keystores / Secrets
 *.jks

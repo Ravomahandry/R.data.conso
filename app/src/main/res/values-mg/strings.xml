@@ -176,7 +176,7 @@
     <string name="insight_ghost_title">Mitsitsy Ghost</string>
     <string name="insight_ghost_desc">Ampidiro ny Mode Ghost mba hitsitsiana 15%%.</string>
     <string name="insight_exhaust_title">Fanairana Forfait</string>
-    <string name="insight_exhaust_desc">Ho lany ao anatin\'ny %1$d andro ny forfait-nao.</string>
+    <string name="insight_exhaust_desc">Ho lany ao anatin\'ny %1$d andro ny forfait-nao. Mitsitsy %2$s isan\'andro.</string>
     <string name="insight_night_title">Fampiasana amin\'ny alina</string>
     <string name="action_optimize">OPTIMISER MON MOIS</string>
     <string name="action_optimize_desc">L\'IA va bloquer les apps gourmandes pour sauver votre forfait.</string>

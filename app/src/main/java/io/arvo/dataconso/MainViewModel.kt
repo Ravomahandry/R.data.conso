@@ -7,6 +7,13 @@ import io.arvo.dataconso.data.AppQuotaEntity
 import io.arvo.dataconso.data.AppSettings
 import io.arvo.dataconso.data.DataRepository
 import io.arvo.dataconso.data.HistoryEntry
+import io.arvo.dataconso.domain.usecase.AppQuotaDisplayStatus
+import io.arvo.dataconso.domain.usecase.AppQuotaPolicy
+import io.arvo.dataconso.domain.usecase.AppQuotaRuntimeSnapshot
+import io.arvo.dataconso.domain.usecase.VpnDiagnosticsEngine
+import io.arvo.dataconso.domain.usecase.VpnDiagnosticEvent
+import io.arvo.dataconso.domain.usecase.VpnDiagnosticsReport
+import io.arvo.dataconso.domain.usecase.VpnRuntimeSnapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -56,6 +63,8 @@ class MainViewModel @Inject constructor(
 
     private val _allInstalledApps = MutableStateFlow<List<AppUsageInfo>>(emptyList())
     private val _hasVpnConflict = MutableStateFlow(false)
+    private val _vpnPermissionRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val vpnPermissionRequests = _vpnPermissionRequests.asSharedFlow()
 
     private val _dailyAppUsage = MutableStateFlow<List<DailyAppUsage>>(emptyList())
     val dailyAppUsage = _dailyAppUsage.asStateFlow()
@@ -167,6 +176,21 @@ class MainViewModel @Inject constructor(
         wifiMap to mobileMap
     }.flatMapLatest { (wifiMap, mobileMap) ->
         getAppQuotasUseCase(wifiMap, mobileMap)
+    }.retryWhen { cause, _ ->
+        Log.e("MainViewModel", "App quota usage measurement failed", cause)
+        val runtime = RealTimeData.appQuotaRuntime.value
+        RealTimeData.updateAppQuotaRuntime(
+            runtime.copy(
+                measurementError = context.getString(R.string.app_quota_measurement_error)
+            )
+        )
+        delay(2_000L)
+        true
+    }.onEach {
+        val runtime = RealTimeData.appQuotaRuntime.value
+        if (runtime.measurementError != null) {
+            RealTimeData.updateAppQuotaRuntime(runtime.copy(measurementError = null))
+        }
     }
 
     val analysisState = combine(
@@ -233,7 +257,10 @@ class MainViewModel @Inject constructor(
         RealTimeData.appUsagesWifi,
         RealTimeData.appUsagesMobile,
         _allInstalledApps,
-        _hasVpnConflict
+        _hasVpnConflict,
+        RealTimeData.appQuotaRuntime,
+        RealTimeData.vpnRuntime,
+        RealTimeData.vpnDiagnosticsEvents
     ) { args: Array<Any?> ->
         val r = args[0] as RealtimeState
         val a = args[1] as AnalysisState
@@ -242,6 +269,9 @@ class MainViewModel @Inject constructor(
         val liveMobile = args[4] as Map<String, Long>
         val installedApps = args[5] as List<AppUsageInfo>
         val hasVpnConflict = args[6] as Boolean
+        val appQuotaRuntime = args[7] as AppQuotaRuntimeSnapshot
+        val vpnRuntime = args[8] as VpnRuntimeSnapshot
+        val vpnEvents = args[9] as List<VpnDiagnosticEvent>
 
         // Sommité : Fusion des données Top Apps (Système + Temps Réel)
         val liveMap = if (source == NetworkSource.WIFI) liveWifi else if (source == NetworkSource.MOBILE) liveMobile else {
@@ -272,6 +302,21 @@ class MainViewModel @Inject constructor(
             topApps = mergedTopApps.sortedByDescending { it.bytes }.take(5),
             insights = a.insights,
             appQuotas = a.appQuotas,
+            appQuotaRuntime = appQuotaRuntime,
+            vpnRuntime = vpnRuntime,
+            vpnDiagnostics = VpnDiagnosticsEngine.evaluate(
+                a.appQuotas,
+                appQuotaRuntime,
+                vpnRuntime
+            ),
+            vpnDiagnosticEvents = vpnEvents,
+            appQuotaStatuses = a.appQuotas.associate { quota ->
+                quota.packageName to AppQuotaPolicy.displayStatus(
+                    quota,
+                    appQuotaRuntime,
+                    r.isTunnelActive
+                )
+            },
             isVpnRunning = r.isVpnRunning,
             isTunnelActive = r.isTunnelActive,
             hasVpnConflict = hasVpnConflict,
@@ -288,6 +333,15 @@ class MainViewModel @Inject constructor(
         val history: List<HistoryEntry> = emptyList(),
         val topApps: List<AppUsageInfo> = emptyList(),
         val appQuotas: List<AppQuotaEntity> = emptyList(),
+        val appQuotaRuntime: AppQuotaRuntimeSnapshot = AppQuotaRuntimeSnapshot(),
+        val appQuotaStatuses: Map<String, AppQuotaDisplayStatus> = emptyMap(),
+        val vpnRuntime: VpnRuntimeSnapshot = VpnRuntimeSnapshot(),
+        val vpnDiagnostics: VpnDiagnosticsReport = VpnDiagnosticsEngine.evaluate(
+            emptyList(),
+            AppQuotaRuntimeSnapshot(),
+            VpnRuntimeSnapshot()
+        ),
+        val vpnDiagnosticEvents: List<VpnDiagnosticEvent> = emptyList(),
         val insights: List<ArvoInsight> = emptyList(),
         val isVpnRunning: Boolean = false,
         val isTunnelActive: Boolean = false,
@@ -443,7 +497,7 @@ class MainViewModel @Inject constructor(
     fun addAppQuota(pkg: String, name: String, bytes: Long, netType: String) = viewModelScope.launch(Dispatchers.IO) {
         val cal = Calendar.getInstance().apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }
         repository.saveQuota(AppQuotaEntity(pkg, name, bytes, 0L, true, false, false, cal.timeInMillis, netType))
-        kickVpnService()
+        kickVpnService(requestPermission = true)
     }
 
     fun updateAppQuota(quota: AppQuotaEntity, newBytes: Long, newNetType: String) = viewModelScope.launch(Dispatchers.IO) {
@@ -451,10 +505,13 @@ class MainViewModel @Inject constructor(
             quota.copy(
                 quotaBytes = newBytes,
                 networkType = newNetType,
-                isBlocked = newBytes > 0L && quota.usedBytes >= newBytes
+                isBlocked = AppQuotaPolicy.isQuotaExceeded(
+                    quota.copy(quotaBytes = newBytes, networkType = newNetType),
+                    quota.usedBytes
+                )
             )
         )
-        kickVpnService()
+        kickVpnService(requestPermission = true)
     }
 
     fun removeAppQuota(quota: AppQuotaEntity) = viewModelScope.launch(Dispatchers.IO) {
@@ -464,13 +521,14 @@ class MainViewModel @Inject constructor(
 
     fun toggleManualBlock(quota: AppQuotaEntity) = viewModelScope.launch(Dispatchers.IO) {
         repository.saveQuota(quota.copy(isManualBlocked = !quota.isManualBlocked))
-        kickVpnService()
+        kickVpnService(requestPermission = true)
     }
 
-    private fun kickVpnService() {
+    private fun kickVpnService(requestPermission: Boolean = false) {
         val prepareIntent = android.net.VpnService.prepare(context)
         if (prepareIntent != null) {
             Log.w("ARVO_VM", "VPN permission required; waiting for the visible activity to request it")
+            if (requestPermission) _vpnPermissionRequests.tryEmit(Unit)
             return
         }
 
@@ -479,6 +537,11 @@ class MainViewModel @Inject constructor(
             androidx.core.content.ContextCompat.startForegroundService(context, i)
         } catch (e: Exception) {
             Log.e("ARVO_VM", "Unable to start protection service", e)
+            RealTimeData.updateAppQuotaRuntime(
+                RealTimeData.appQuotaRuntime.value.copy(
+                    errorMessage = context.getString(R.string.blocking_error_service)
+                )
+            )
         }
     }
 

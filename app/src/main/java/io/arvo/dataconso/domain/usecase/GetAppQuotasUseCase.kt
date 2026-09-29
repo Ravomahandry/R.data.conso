@@ -27,7 +27,7 @@ class GetAppQuotasUseCase @Inject constructor(
         val refreshTicker = flow {
             while (coroutineContext.isActive) {
                 emit(Unit)
-                delay(5000L)
+                delay(2_000L)
             }
         }
 
@@ -42,8 +42,8 @@ class GetAppQuotasUseCase @Inject constructor(
             val now = System.currentTimeMillis()
 
             // Optimisation Rigueur : Une seule requête pour TOUTES les applications
-            val wifiStats = usageManager.getMultiAppUsage(quotas.map { it.packageName }, startOfDay, now, android.net.ConnectivityManager.TYPE_WIFI)
-            val mobileStats = usageManager.getMultiAppUsage(
+            val wifiStats = usageManager.getMultiAppUsageStrict(quotas.map { it.packageName }, startOfDay, now, android.net.ConnectivityManager.TYPE_WIFI)
+            val mobileStats = usageManager.getMultiAppUsageStrict(
                 quotas.map { it.packageName },
                 startOfDay,
                 now,
@@ -52,17 +52,17 @@ class GetAppQuotasUseCase @Inject constructor(
             )
 
             quotas.map { q ->
-                val systemUsage = when(q.networkType) {
-                    "WIFI" -> wifiStats[q.packageName]?.totalBytes ?: 0L
-                    "MOBILE" -> mobileStats[q.packageName]?.totalBytes ?: 0L
-                    else -> (wifiStats[q.packageName]?.totalBytes ?: 0L) + (mobileStats[q.packageName]?.totalBytes ?: 0L)
-                }
+                val systemUsage = AppQuotaPolicy.combineUsage(
+                    q.networkType,
+                    wifiStats[q.packageName]?.totalBytes ?: 0L,
+                    mobileStats[q.packageName]?.totalBytes ?: 0L
+                )
                 
-                val realtimeUsage = when(q.networkType) {
-                    "WIFI" -> rtAppWifi[q.packageName] ?: 0L
-                    "MOBILE" -> rtAppMobile[q.packageName] ?: 0L
-                    else -> (rtAppWifi[q.packageName] ?: 0L) + (rtAppMobile[q.packageName] ?: 0L)
-                }
+                val realtimeUsage = AppQuotaPolicy.combineUsage(
+                    q.networkType,
+                    rtAppWifi[q.packageName] ?: 0L,
+                    rtAppMobile[q.packageName] ?: 0L
+                )
 
                 // NetworkStats already includes the current session. The realtime
                 // value is a fallback while the system counter catches up, not an
@@ -70,7 +70,7 @@ class GetAppQuotasUseCase @Inject constructor(
                 val usedBytes = maxOf(systemUsage, realtimeUsage)
                 q.copy(
                     usedBytes = usedBytes,
-                    isBlocked = q.quotaBytes > 0 && usedBytes >= q.quotaBytes
+                    isBlocked = AppQuotaPolicy.isQuotaExceeded(q, usedBytes)
                 )
             }
         }

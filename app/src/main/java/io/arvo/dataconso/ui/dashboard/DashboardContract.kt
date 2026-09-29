@@ -6,6 +6,13 @@ import io.arvo.dataconso.HistoryEntry
 import io.arvo.dataconso.NetworkSource
 import io.arvo.dataconso.domain.model.UsageData
 
+data class DashboardHotspotData(
+    val isActive: Boolean = false,
+    val todayBytes: Long = 0,
+    val todaySessions: Int = 0,
+    val monthBytes: Long = 0
+)
+
 data class DashboardState(
     val isLoading: Boolean = false,
     val usageData: UsageData = UsageData(),
@@ -14,6 +21,7 @@ data class DashboardState(
     val topApps: List<AppUsageInfo> = emptyList(),
     val currentSource: NetworkSource = NetworkSource.MOBILE,
     val currentGranularity: Granularity = Granularity.DAILY,
+    val hotspot: DashboardHotspotData = DashboardHotspotData(),
     val errorMessage: String? = null
 )
 

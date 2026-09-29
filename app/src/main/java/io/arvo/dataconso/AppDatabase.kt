@@ -124,11 +124,22 @@ interface AppQuotaDao {
     suspend fun resetAllQuotas(now: Long)
 }
 
-@Database(entities = [AppSettings::class, HistoryEntry::class, SimulationEntry::class, AppQuotaEntity::class], version = 32, exportSchema = false)
+@Database(
+    entities = [
+        AppSettings::class,
+        HistoryEntry::class,
+        SimulationEntry::class,
+        AppQuotaEntity::class,
+        HotspotSessionEntity::class
+    ],
+    version = 34,
+    exportSchema = false
+)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun settingsDao(): SettingsDao
     abstract fun historyDao(): HistoryDao
     abstract fun quotaDao(): AppQuotaDao
+    abstract fun hotspotSessionDao(): HotspotSessionDao
     
     companion object {
         private const val DB_NAME = "arvo_v5_final.db"
@@ -140,6 +151,51 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("ALTER TABLE app_settings ADD COLUMN monthlyMobileGb REAL NOT NULL DEFAULT 5.0")
                 database.execSQL("UPDATE app_settings SET monthlyMobileGb = monthlySim1Gb")
                 // On garde les anciennes colonnes dans la BDD pour éviter un drop/create complexe en SQLite
+            }
+        }
+
+        private val MIGRATION_32_33 = object : androidx.room.migration.Migration(32, 33) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS hotspot_sessions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        startTimestamp INTEGER NOT NULL,
+                        endTimestamp INTEGER NOT NULL DEFAULT 0,
+                        durationMillis INTEGER NOT NULL DEFAULT 0,
+                        rxBytes INTEGER NOT NULL DEFAULT 0,
+                        txBytes INTEGER NOT NULL DEFAULT 0,
+                        totalBytes INTEGER NOT NULL DEFAULT 0,
+                        synced INTEGER NOT NULL DEFAULT 0,
+                        sessionId TEXT NOT NULL DEFAULT '',
+                        baselineRxBytes INTEGER NOT NULL DEFAULT 0,
+                        baselineTxBytes INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_hotspot_sessions_startTimestamp " +
+                        "ON hotspot_sessions(startTimestamp)"
+                )
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_hotspot_sessions_sessionId " +
+                        "ON hotspot_sessions(sessionId)"
+                )
+            }
+        }
+
+        private val MIGRATION_33_34 = object : androidx.room.migration.Migration(33, 34) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE hotspot_sessions ADD COLUMN lastSyncedTimestamp " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+                database.execSQL(
+                    "ALTER TABLE hotspot_sessions ADD COLUMN lastRxBytes INTEGER NOT NULL DEFAULT 0"
+                )
+                database.execSQL(
+                    "ALTER TABLE hotspot_sessions ADD COLUMN lastTxBytes INTEGER NOT NULL DEFAULT 0"
+                )
             }
         }
 
@@ -165,7 +221,7 @@ abstract class AppDatabase : RoomDatabase() {
 
             return Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, DB_NAME)
                 .openHelperFactory(factory)
-                .addMigrations(MIGRATION_31_32)
+                .addMigrations(MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34)
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .enableMultiInstanceInvalidation()
                 .setQueryCallback({ sqlQuery, _ ->

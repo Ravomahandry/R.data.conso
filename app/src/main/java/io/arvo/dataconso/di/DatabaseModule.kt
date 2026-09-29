@@ -31,4 +31,8 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideQuotaDao(database: AppDatabase) = database.quotaDao()
+
+    @Provides
+    @Singleton
+    fun provideHotspotSessionDao(database: AppDatabase) = database.hotspotSessionDao()
 }
