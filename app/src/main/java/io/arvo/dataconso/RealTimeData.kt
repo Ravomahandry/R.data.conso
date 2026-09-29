@@ -3,6 +3,10 @@ package io.arvo.dataconso
 import android.content.Context
 import android.content.Intent
 import android.os.Parcelable
+import io.arvo.dataconso.domain.usecase.AppQuotaRuntimeSnapshot
+import io.arvo.dataconso.domain.usecase.VpnDiagnosticEvent
+import io.arvo.dataconso.domain.usecase.VpnDiagnosticEventType
+import io.arvo.dataconso.domain.usecase.VpnRuntimeSnapshot
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.parcelize.Parcelize
@@ -13,6 +17,7 @@ import kotlinx.parcelize.Parcelize
  */
 object RealTimeData {
     private const val ACTION_SYNC = "io.arvo.dataconso.SYNC_REALTIME"
+    private const val MAX_VPN_DIAGNOSTIC_EVENTS = 200
     
     @Parcelize
     data class SyncData(
@@ -35,6 +40,16 @@ object RealTimeData {
 
     private val _isTunnelActive = MutableStateFlow(false)
     val isTunnelActive = _isTunnelActive.asStateFlow()
+
+    private val _appQuotaRuntime = MutableStateFlow(AppQuotaRuntimeSnapshot())
+    val appQuotaRuntime = _appQuotaRuntime.asStateFlow()
+
+    private val _vpnRuntime = MutableStateFlow(VpnRuntimeSnapshot())
+    val vpnRuntime = _vpnRuntime.asStateFlow()
+
+    private val _vpnDiagnosticsEvents = MutableStateFlow<List<VpnDiagnosticEvent>>(emptyList())
+    val vpnDiagnosticsEvents = _vpnDiagnosticsEvents.asStateFlow()
+    private var nextDiagnosticEventId = 0L
 
     private val _dlSpeed = MutableStateFlow(0L)
     val dlSpeed = _dlSpeed.asStateFlow()
@@ -94,6 +109,32 @@ object RealTimeData {
         _monthWifiBytes.value = wifi
         _monthMobileBytes.value = mobile
     }
+
+    fun updateAppQuotaRuntime(runtime: AppQuotaRuntimeSnapshot) {
+        _appQuotaRuntime.value = runtime
+    }
+
+    @Synchronized
+    fun updateVpnRuntime(runtime: VpnRuntimeSnapshot) {
+        _vpnRuntime.value = runtime
+    }
+
+    @Synchronized
+    fun recordVpnDiagnosticEvent(
+        type: VpnDiagnosticEventType,
+        message: String,
+        packageName: String? = null,
+        timestamp: Long = System.currentTimeMillis()
+    ) {
+        val event = VpnDiagnosticEvent(
+            id = ++nextDiagnosticEventId,
+            timestamp = timestamp,
+            type = type,
+            packageName = packageName,
+            message = message
+        )
+        _vpnDiagnosticsEvents.value = (_vpnDiagnosticsEvents.value + event).takeLast(MAX_VPN_DIAGNOSTIC_EVENTS)
+    }
     
     fun updateWeekUsage(wifi: Long, mobile: Long) {
         _weekWifiBytes.value = wifi
@@ -126,6 +167,7 @@ object RealTimeData {
                 }
                 data?.let { applyData(it) }
             }
+
         }
     }
 }

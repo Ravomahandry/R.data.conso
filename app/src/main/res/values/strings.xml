@@ -51,6 +51,7 @@
     <string name="nav_analysis">Historique</string>
     <string name="nav_hotspot">Hotspot</string>
     <string name="nav_settings">Paramètres</string>
+    <string name="vpn_diagnostics_title">Diagnostics VPN</string>
     <string name="section_analysis">VOTRE CONSOMMATION</string>
     <string name="section_top_apps">GROS CONSOMMATEURS</string>
     <string name="section_quota_control">VOS LIMITES</string>
@@ -233,6 +234,19 @@
     <string name="firewall_status_active">SÉCURITÉ ACTIVE</string>
     <string name="firewall_status_initializing">DÉMARRAGE PROTECTION&#8230;</string>
     <string name="firewall_status_idle">EN ATTENTE</string>
+    <string name="firewall_status_monitoring">SURVEILLANCE ACTIVE</string>
+    <string name="firewall_status_error">ERREUR DE PROTECTION</string>
+    <string name="app_quota_status_blocked">BLOQUÉ</string>
+    <string name="app_quota_status_blocking">BLOCAGE EN COURS</string>
+    <string name="app_quota_status_pending">EN ATTENTE</string>
+    <string name="app_quota_status_error">ERREUR</string>
+    <string name="app_quota_status_monitoring">SURVEILLÉE</string>
+    <string name="blocking_error_unknown">Le moteur de filtrage s’est arrêté.</string>
+    <string name="blocking_error_rule">Une règle applicative n’a pas pu être installée.</string>
+    <string name="blocking_error_tunnel">Le tunnel VPN n’a pas pu être établi. Le trafic n’est pas bloqué.</string>
+    <string name="app_quota_measurement_error">Mesure des données indisponible ; état du blocage non confirmé.</string>
+    <string name="blocking_error_measurement">Impossible de lire les règles ou les statistiques quota ; le dernier état réseau est conservé.</string>
+    <string name="blocking_error_service">Le service VPN n’a pas pu être démarré.</string>
     <string name="export_pdf_button">EXPORTER MON BILAN (PDF)</string>
     <string name="pdf_generated_title">Bilan PDF Prêt</string>
     <string name="pdf_generated_msg">Votre rapport a été enregistré sur votre téléphone.</string>

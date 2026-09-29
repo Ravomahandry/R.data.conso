@@ -5,6 +5,8 @@ import android.util.Log
 import kotlinx.coroutines.*
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Intercepteur de paquets ARVO - Phase Expert (NDK v2).
@@ -12,6 +14,15 @@ import javax.inject.Singleton
  */
 @Singleton
 class RealPacketInterceptor @Inject constructor() {
+    enum class Status {
+        IDLE,
+        STARTING,
+        ACTIVE,
+        ERROR
+    }
+
+    data class State(val status: Status = Status.IDLE, val errorMessage: String? = null)
+
     
     companion object {
         init {
@@ -25,6 +36,8 @@ class RealPacketInterceptor @Inject constructor() {
 
     private var interceptionJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val _state = MutableStateFlow(State())
+    val state = _state.asStateFlow()
 
     private var currentGlobal = false
 
@@ -39,11 +52,21 @@ class RealPacketInterceptor @Inject constructor() {
 
     fun startInterception(pfd: ParcelFileDescriptor) {
         stopInterception()
+        _state.value = State(Status.STARTING)
         interceptionJob = scope.launch {
             try {
-                runNativePacketLoop(pfd.fd, currentGlobal)
+                val generation = beginNativeLoop()
+                _state.value = State(Status.ACTIVE)
+                runNativePacketLoop(pfd.fd, currentGlobal, generation)
+                if (isActive) {
+                    _state.value = State(Status.ERROR, "Packet interception stopped unexpectedly")
+                }
             } catch (e: Exception) {
                 Log.e("ARVO_NET_NATIVE", "Native Engine Crash", e)
+                if (isActive) _state.value = State(Status.ERROR, e.message ?: e.javaClass.simpleName)
+            } catch (e: LinkageError) {
+                Log.e("ARVO_NET_NATIVE", "Native Engine Linkage Failure", e)
+                if (isActive) _state.value = State(Status.ERROR, e.message ?: e.javaClass.simpleName)
             }
         }
     }
@@ -54,11 +77,13 @@ class RealPacketInterceptor @Inject constructor() {
         } catch (_: Throwable) {}
         interceptionJob?.cancel()
         interceptionJob = null
+        _state.value = State()
     }
 
     // --- JNI Bridge ---
     
     private external fun updateNativeState(global: Boolean)
+    private external fun beginNativeLoop(): Int
     private external fun stopNativeLoop()
-    private external fun runNativePacketLoop(fd: Int, global: Boolean)
+    private external fun runNativePacketLoop(fd: Int, global: Boolean, generation: Int)
 }

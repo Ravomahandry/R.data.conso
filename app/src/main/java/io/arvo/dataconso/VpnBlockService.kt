@@ -31,10 +31,17 @@ import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import dagger.hilt.android.AndroidEntryPoint
+import io.arvo.dataconso.data.AppQuotaEntity
 import io.arvo.dataconso.network.DnsResolver
 import io.arvo.dataconso.network.RealPacketInterceptor
+import io.arvo.dataconso.domain.usecase.AppQuotaPolicy
+import io.arvo.dataconso.domain.usecase.AppQuotaRuntimeSnapshot
+import io.arvo.dataconso.domain.usecase.VpnDiagnosticsEngine
+import io.arvo.dataconso.domain.usecase.VpnDiagnosticEventType
+import io.arvo.dataconso.domain.usecase.VpnRuntimeSnapshot
 import io.arvo.dataconso.util.TimeUtils
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
@@ -92,11 +99,61 @@ class VpnBlockService : VpnService() {
     companion object {
         const val ACTION_REFRESH = "io.arvo.dataconso.ACTION_REFRESH"
         private const val HOST_PACKAGE = BuildConfig.APPLICATION_ID
+        private const val QUOTA_SYNC_INTERVAL_MILLIS = 2_000L
     }
 
     override fun onCreate() {
         super.onCreate()
         RealTimeData.updateAndBroadcast(this, isRunning = true)
+        RealTimeData.updateAppQuotaRuntime(AppQuotaRuntimeSnapshot())
+        interceptorStateJob = serviceScope.launch {
+            packetInterceptor.state.collect { state ->
+                when (state.status) {
+                    RealPacketInterceptor.Status.ACTIVE -> {
+                        if (vpnInterface != null) {
+                            if (tunnelSinceTimestamp == null) {
+                                tunnelSinceTimestamp = System.currentTimeMillis()
+                            }
+                            RealTimeData.updateAndBroadcast(this@VpnBlockService, isTunnelActive = true)
+                            RealTimeData.updateAppQuotaRuntime(
+                                AppQuotaRuntimeSnapshot(
+                                    appliedPackages = requestedQuotaPackages - failedQuotaPackages,
+                                    failedPackages = failedQuotaPackages,
+                                    globalBlocked = requestedGlobalBlock,
+                                    errorMessage = ruleErrorMessage
+                                )
+                            )
+                            updateVpnRuntimeSnapshot(
+                                blockRequired = requestedGlobalBlock || requestedQuotaPackages.isNotEmpty(),
+                                rebuilding = false,
+                                tunnelActive = true
+                            )
+                        }
+                    }
+                    RealPacketInterceptor.Status.ERROR -> {
+                        val message = state.errorMessage ?: getString(R.string.blocking_error_unknown)
+                        ruleErrorMessage = message
+                        recordVpnError(message)
+                        RealTimeData.updateAndBroadcast(this@VpnBlockService, isTunnelActive = false)
+                        RealTimeData.updateAppQuotaRuntime(
+                            AppQuotaRuntimeSnapshot(
+                                globalBlocked = requestedGlobalBlock,
+                                failedPackages = requestedQuotaPackages,
+                                errorMessage = message
+                            )
+                        )
+                        updateVpnRuntimeSnapshot(
+                            blockRequired = requestedGlobalBlock || requestedQuotaPackages.isNotEmpty(),
+                            rebuilding = false,
+                            tunnelActive = false,
+                            errorMessage = message
+                        )
+                    }
+                    RealPacketInterceptor.Status.IDLE -> Unit
+                    RealPacketInterceptor.Status.STARTING -> Unit
+                }
+            }
+        }
         serviceScope.launch { dnsResolver.loadBlockList() }
         val filter = IntentFilter().apply { 
             addAction(Intent.ACTION_SCREEN_ON)
@@ -116,6 +173,7 @@ class VpnBlockService : VpnService() {
     override fun onDestroy() {
         RealTimeData.updateAndBroadcast(this, isRunning = false)
         monitoringJob?.cancel()
+        interceptorStateJob?.cancel()
         unregisterNetworkCallback()
         stopVpn()
         hideFloatingWindow()
@@ -167,7 +225,7 @@ class VpnBlockService : VpnService() {
         monitoringJob = serviceScope.launch {
             var isFirstCheck = true
             while (isActive) {
-                val shouldSyncSystem = isFirstCheck || !isScreenOn
+                val shouldSyncSystem = isFirstCheck
                 checkQuotasAndSpeed(forceSync = shouldSyncSystem)
                 isFirstCheck = false
                 delay(calculateAdaptiveDelay())
@@ -176,15 +234,11 @@ class VpnBlockService : VpnService() {
     }
 
     private fun calculateAdaptiveDelay(): Long {
-        if (!isScreenOn) return 30000L
+        if (!isScreenOn) return QUOTA_SYNC_INTERVAL_MILLIS
         val batteryManager = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
         val batteryLevel = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         
-        return when {
-            batteryLevel < 15 -> 10000L
-            batteryLevel < 30 -> 5000L
-            else -> 1000L
-        }
+        return if (batteryLevel < 30) QUOTA_SYNC_INTERVAL_MILLIS else 1000L
     }
 
     private class GlobalTracker(
@@ -202,15 +256,48 @@ class VpnBlockService : VpnService() {
     private val appLastSystemUsage = mutableMapOf<String, Long>()
     private var lastGlobalBlock = false
     private var lastBlockedApps = emptySet<String>()
+    private var requestedQuotaPackages = emptySet<String>()
+    private var requestedGlobalBlock = false
+    private var appliedQuotaPackages = emptySet<String>()
+    private var appliedGlobalBlock = false
+    private var appliedBlockedApps = emptySet<String>()
+    private var monitoredQuotaCount = 0
+    private var tunnelSinceTimestamp: Long? = null
+    private var lastQuotaSyncTimestamp: Long? = null
+    private var tunnelRebuildCount = 0
+    private var vpnErrorCount = 0
+    private var lastRecordedError: String? = null
+    private var lastDiagnosedBlockedPackages = emptySet<String>()
+    private var failedQuotaPackages = emptySet<String>()
+    private var ruleErrorMessage: String? = null
     private var lastVpnState = false
     private var lastVpnAttemptAt = 0L
     private var lastWidgetUpdateTime = 0L
     private var lastQuotaSyncTime = 0L
     private val appUsageWifiCache = mutableMapOf<String, Long>()
     private val appUsageMobileCache = mutableMapOf<String, Long>()
+    private var interceptorStateJob: Job? = null
 
     private suspend fun checkQuotasAndSpeed(forceSync: Boolean = false) = quotaMutex.withLock {
-        val settings = try { repository.getSettings() } catch (_: Throwable) { return@withLock }
+        val settings = try {
+            repository.getSettings()
+        } catch (e: Exception) {
+            Log.e("ARVO_QUOTA", "Unable to read settings for quota enforcement", e)
+            val message = getString(R.string.blocking_error_measurement)
+            recordVpnError(message)
+            RealTimeData.updateAppQuotaRuntime(
+                RealTimeData.appQuotaRuntime.value.copy(
+                    errorMessage = message
+                )
+            )
+            updateVpnRuntimeSnapshot(
+                blockRequired = requestedGlobalBlock || requestedQuotaPackages.isNotEmpty(),
+                rebuilding = false,
+                tunnelActive = vpnInterface != null,
+                errorMessage = message
+            )
+            return@withLock
+        }
         
         if (isScreenOn) {
             updateSpeedData()
@@ -232,7 +319,7 @@ class VpnBlockService : VpnService() {
             mobileTracker.lastDayStartMillis != currentDayStart ||
             mobileTracker.lastBillingCycleStartMillis != currentBillingCycleStart ||
             (isUserInArvo && currentTime - lastWidgetUpdateTime > 5000) ||
-            currentTime - lastQuotaSyncTime > 5000
+            currentTime - lastQuotaSyncTime >= QUOTA_SYNC_INTERVAL_MILLIS
 
         // 1. Calcul Trafic Wi-Fi (Total - Mobile)
         val wifiRtDl = (TrafficStats.getTotalRxBytes() - TrafficStats.getMobileRxBytes()).coerceAtLeast(0L)
@@ -300,27 +387,35 @@ class VpnBlockService : VpnService() {
                 }
                 val startTime = cal.timeInMillis
 
+                val packageNames = allQuotas.map { it.packageName }
+                val wifiAppStats = usageManager.getMultiAppUsageStrict(
+                    packageNames,
+                    startTime,
+                    currentTime,
+                    ConnectivityManager.TYPE_WIFI
+                )
+                val mobileAppStats = usageManager.getMultiAppUsageStrict(
+                    packageNames,
+                    startTime,
+                    currentTime,
+                    ConnectivityManager.TYPE_MOBILE,
+                    subIdForCheck
+                )
                 allQuotas.forEach { q ->
-                    val qTransport = when (q.networkType) {
-                        "WIFI" -> ConnectivityManager.TYPE_WIFI
-                        "MOBILE" -> ConnectivityManager.TYPE_MOBILE
-                        else -> ConnectivityManager.TYPE_WIFI // pour BOTH ou défaut, on évalue le Wi-Fi ou mobile selon dispo
-                    }
-                    val appStats = if (q.networkType == "BOTH") {
-                        val w = usageManager.getAppUsageForRange(q.packageName, startTime, currentTime, ConnectivityManager.TYPE_WIFI).totalBytes
-                        val m = usageManager.getAppUsageForRange(q.packageName, startTime, currentTime, ConnectivityManager.TYPE_MOBILE, subIdForCheck).totalBytes
-                        w + m
-                    } else {
-                        usageManager.getAppUsageForRange(
-                            q.packageName,
-                            startTime,
-                            currentTime,
-                            qTransport,
-                            if (qTransport == ConnectivityManager.TYPE_MOBILE) subIdForCheck else -1
-                        ).totalBytes
-                    }
-                    
-                    val isExceeded = q.quotaBytes > 0 && appStats >= q.quotaBytes
+                    val appStats = maxOf(
+                        AppQuotaPolicy.combineUsage(
+                            q.networkType,
+                            wifiAppStats[q.packageName]?.totalBytes ?: 0L,
+                            mobileAppStats[q.packageName]?.totalBytes ?: 0L
+                        ),
+                        AppQuotaPolicy.combineUsage(
+                            q.networkType,
+                            RealTimeData.appUsagesWifi.value[q.packageName] ?: 0L,
+                            RealTimeData.appUsagesMobile.value[q.packageName] ?: 0L
+                        )
+                    )
+
+                    val isExceeded = AppQuotaPolicy.isQuotaExceeded(q, appStats)
                     Log.d(
                         "ARVO_QUOTA",
                         "quota package=${q.packageName} enabled=${q.isEnabled} " +
@@ -336,6 +431,8 @@ class VpnBlockService : VpnService() {
                     allQuotas = repository.getAllQuotas()
                 }
                 lastQuotaSyncTime = currentTime
+                lastQuotaSyncTimestamp = currentTime
+                lastRecordedError = null
 
                 RealTimeData.updateAndBroadcast(
                     this@VpnBlockService,
@@ -344,16 +441,51 @@ class VpnBlockService : VpnService() {
                     wifiMonth = wifiMonth,
                     mobileMonth = mobileMonth
                 )
-            } catch (e: Exception) { Log.e("ARVO_QUOTA", "Sync failed", e) }
+            } catch (e: Exception) {
+                Log.e("ARVO_QUOTA", "Usage sync failed; preserving the last known quota state", e)
+                val message = getString(R.string.blocking_error_measurement)
+                recordVpnError(message)
+                RealTimeData.updateAppQuotaRuntime(
+                    RealTimeData.appQuotaRuntime.value.copy(
+                        measurementError = message
+                    )
+                )
+                updateVpnRuntimeSnapshot(
+                    blockRequired = requestedGlobalBlock || requestedQuotaPackages.isNotEmpty(),
+                    rebuilding = false,
+                    tunnelActive = vpnInterface != null,
+                    errorMessage = message
+                )
+            }
         }
 
         val appsToBlock = mutableSetOf<String>()
-        var allQuotas = repository.getAllQuotas()
+        val quotaPackagesToBlock = mutableSetOf<String>()
+        val allQuotas = try {
+            repository.getAllQuotas()
+        } catch (e: Exception) {
+            Log.e("ARVO_QUOTA", "Unable to read app quota rules", e)
+            val message = getString(R.string.blocking_error_measurement)
+            recordVpnError(message)
+            RealTimeData.updateAppQuotaRuntime(
+                RealTimeData.appQuotaRuntime.value.copy(
+                    errorMessage = message
+                )
+            )
+            updateVpnRuntimeSnapshot(
+                blockRequired = requestedGlobalBlock || requestedQuotaPackages.isNotEmpty(),
+                rebuilding = false,
+                tunnelActive = vpnInterface != null,
+                errorMessage = message
+            )
+            return@withLock
+        }
+        monitoredQuotaCount = allQuotas.count { it.isEnabled }
         allQuotas.forEach { it ->
             if (it.packageName == HOST_PACKAGE) return@forEach
 
             // Correction : On applique le blocage si le quota est dépassé, sans exiger que isCorrectNetwork soit strictement égal au réseau actif instantané
-            val isQuotaExceeded = it.quotaBytes > 0 && it.usedBytes >= it.quotaBytes
+            val isQuotaExceeded = AppQuotaPolicy.isQuotaExceeded(it, it.usedBytes)
             Log.d(
                 "ARVO_QUOTA",
                 "block decision package=${it.packageName} enabled=${it.isEnabled} " +
@@ -362,7 +494,8 @@ class VpnBlockService : VpnService() {
             )
             // isBlocked is a cached/display field. The current measurement is
             // authoritative so raising a quota immediately releases the app.
-            if (it.isEnabled && (isQuotaExceeded || it.isManualBlocked)) {
+            if (AppQuotaPolicy.shouldBlock(it, it.usedBytes)) {
+                quotaPackagesToBlock.add(it.packageName)
                 appsToBlock.add(it.packageName)
                 if (it.packageName == "com.google.android.youtube") {
                     appsToBlock.add("com.google.android.youtube.tv")
@@ -413,7 +546,12 @@ class VpnBlockService : VpnService() {
         // a VPN tunnel when there is something to block or filter.
         val shouldBeRunning = vpnProtectionRequired || hasEnabledQuotas || settings.vpnEnabled
         
-        val stateChanged = globalBlock != lastGlobalBlock || appsToBlock != lastBlockedApps || shouldBeRunning != lastVpnState
+        val rulesChanged = globalBlock != lastGlobalBlock || appsToBlock != lastBlockedApps
+        val stateChanged = rulesChanged || shouldBeRunning != lastVpnState
+        val appliedRulesMatch = globalBlock == appliedGlobalBlock &&
+            (globalBlock || appsToBlock == appliedBlockedApps)
+        val interceptorFailed = packetInterceptor.state.value.status == RealPacketInterceptor.Status.ERROR ||
+            packetInterceptor.state.value.status == RealPacketInterceptor.Status.IDLE
 
         Log.d(
             "ARVO_BLOCK",
@@ -427,11 +565,39 @@ class VpnBlockService : VpnService() {
             lastGlobalBlock = globalBlock; lastBlockedApps = appsToBlock.toSet(); lastVpnState = shouldBeRunning
         }
 
-        if (vpnProtectionRequired && vpnInterface == null) {
+        recordBlockedPackageChanges(
+            quotaPackagesToBlock,
+            allQuotas.associateBy { it.packageName }
+        )
+        if (vpnProtectionRequired &&
+            (vpnInterface == null || !appliedRulesMatch || interceptorFailed)
+        ) {
             val now = System.currentTimeMillis()
             if (stateChanged || now - lastVpnAttemptAt >= 5000L) {
                 lastVpnAttemptAt = now
-                establishVpn(globalBlock, lastBlockedApps, settings)
+                requestedQuotaPackages = quotaPackagesToBlock
+                requestedGlobalBlock = globalBlock
+                failedQuotaPackages = emptySet()
+                ruleErrorMessage = null
+                RealTimeData.updateAppQuotaRuntime(
+                    AppQuotaRuntimeSnapshot(
+                        globalBlocked = appliedGlobalBlock,
+                        appliedPackages = appliedQuotaPackages,
+                        pendingPackages = quotaPackagesToBlock - appliedQuotaPackages
+                    )
+                )
+                updateVpnRuntimeSnapshot(
+                    blockRequired = vpnProtectionRequired,
+                    rebuilding = true,
+                    tunnelActive = vpnInterface != null,
+                    errorMessage = null
+                )
+                establishVpn(
+                    globalBlock,
+                    lastBlockedApps,
+                    settings,
+                    quotaPackagesToBlock
+                )
             } else {
                 Log.d("ARVO_VPN", "Protection remains enabled; waiting for tunnel retry")
             }
@@ -444,6 +610,34 @@ class VpnBlockService : VpnService() {
             stopVpn()
             ArvoWidgetProvider.triggerUpdate(this@VpnBlockService)
         }
+        if (!vpnProtectionRequired && vpnInterface == null) {
+            requestedQuotaPackages = emptySet()
+            requestedGlobalBlock = false
+            failedQuotaPackages = emptySet()
+            ruleErrorMessage = null
+            val currentRuntime = RealTimeData.appQuotaRuntime.value
+            RealTimeData.updateAppQuotaRuntime(
+                if (currentRuntime.measurementError != null) {
+                    currentRuntime.copy(
+                        globalBlocked = false,
+                        appliedPackages = emptySet(),
+                        pendingPackages = emptySet(),
+                        failedPackages = emptySet(),
+                        errorMessage = null
+                    )
+                } else {
+                    AppQuotaRuntimeSnapshot()
+                }
+            )
+        }
+
+        updateVpnRuntimeSnapshot(
+            blockRequired = vpnProtectionRequired,
+            rebuilding = false,
+            tunnelActive = vpnInterface != null &&
+                packetInterceptor.state.value.status == RealPacketInterceptor.Status.ACTIVE,
+            errorMessage = ruleErrorMessage
+        )
 
         val now = System.currentTimeMillis()
         if (globalBlock || appsToBlock.isNotEmpty() || (now - lastWidgetUpdateTime > 5000)) {
@@ -455,6 +649,68 @@ class VpnBlockService : VpnService() {
         }
         
         if (settings.speedEnabled && isScreenOn) withContext(Dispatchers.Main) { showFloatingWindow() } else hideFloatingWindow()
+    }
+
+    private fun updateVpnRuntimeSnapshot(
+        blockRequired: Boolean,
+        rebuilding: Boolean,
+        tunnelActive: Boolean,
+        errorMessage: String? = ruleErrorMessage
+    ) {
+        val now = System.currentTimeMillis()
+        if (tunnelActive && tunnelSinceTimestamp == null) tunnelSinceTimestamp = now
+        if (!tunnelActive) tunnelSinceTimestamp = null
+        RealTimeData.updateVpnRuntime(
+            VpnRuntimeSnapshot(
+                state = VpnDiagnosticsEngine.runtimeState(
+                    blockRequired = blockRequired,
+                    tunnelActive = tunnelActive,
+                    rebuilding = rebuilding,
+                    errorMessage = errorMessage
+                ),
+                tunnelActive = tunnelActive,
+                monitoredApps = monitoredQuotaCount,
+                blockedApps = appliedQuotaPackages.size,
+                lastSyncTimestamp = lastQuotaSyncTimestamp,
+                tunnelSinceTimestamp = tunnelSinceTimestamp,
+                rebuildCount = tunnelRebuildCount,
+                errorCount = vpnErrorCount,
+                errorMessage = errorMessage
+            )
+        )
+    }
+
+    private fun recordVpnError(message: String) {
+        if (message == lastRecordedError) return
+        lastRecordedError = message
+        vpnErrorCount++
+        RealTimeData.recordVpnDiagnosticEvent(
+            VpnDiagnosticEventType.ERROR,
+            message
+        )
+    }
+
+    private fun recordBlockedPackageChanges(
+        requestedPackages: Set<String>,
+        quotasByPackage: Map<String, AppQuotaEntity>
+    ) {
+        (requestedPackages - lastDiagnosedBlockedPackages).forEach { packageName ->
+            val appName = quotasByPackage[packageName]?.appName ?: packageName
+            RealTimeData.recordVpnDiagnosticEvent(
+                VpnDiagnosticEventType.BLOCK_STARTED,
+                "Demande de blocage pour $appName.",
+                packageName
+            )
+        }
+        (lastDiagnosedBlockedPackages - requestedPackages).forEach { packageName ->
+            val appName = quotasByPackage[packageName]?.appName ?: packageName
+            RealTimeData.recordVpnDiagnosticEvent(
+                VpnDiagnosticEventType.BLOCK_RELEASED,
+                "Fin du blocage pour $appName.",
+                packageName
+            )
+        }
+        lastDiagnosedBlockedPackages = requestedPackages
     }
 
     private fun getStartOfDayMillis(referenceTime: Long): Long {
@@ -502,8 +758,12 @@ class VpnBlockService : VpnService() {
         return wifi to mobile
     }
 
-    private fun establishVpn(global: Boolean, apps: Set<String>, settings: AppSettings) {
-        stopVpn()
+    private fun establishVpn(
+        global: Boolean,
+        apps: Set<String>,
+        settings: AppSettings,
+        quotaPackages: Set<String>
+    ) {
         try {
             val dns = try { DnsProvider.valueOf(settings.dnsProvider) } catch (_: Exception) { DnsProvider.ADGUARD }
             val builder = Builder()
@@ -522,20 +782,27 @@ class VpnBlockService : VpnService() {
                 global -> {
                     builder.addRoute("0.0.0.0", 0)
                     builder.addRoute("::", 0)
-                    packetInterceptor.updateBlockingState(global = true)
                 }
                 apps.isNotEmpty() -> {
+                    var allowedPackageCount = 0
                     apps.forEach { pkg -> 
                         if (pkg != HOST_PACKAGE) {
-                            try { builder.addAllowedApplication(pkg) } catch (e: Exception) { Log.w("ARVO_VPN", "Failed to add allowed app: $pkg", e) }
+                            try {
+                                builder.addAllowedApplication(pkg)
+                                allowedPackageCount++
+                            } catch (e: Exception) {
+                                Log.w("ARVO_VPN", "Failed to add blocked application to VPN: $pkg", e)
+                                if (pkg in quotaPackages) failedQuotaPackages += pkg
+                            }
                         }
                     }
-                    if (apps.any { it.contains("google") }) try { builder.addAllowedApplication("com.google.android.gms") } catch (_: Exception) {}
+                    if (allowedPackageCount == 0) {
+                        throw IllegalStateException("No blocked application could be assigned to the VPN")
+                    }
                     builder.addDnsServer("10.0.0.1")
                     builder.addRoute("0.0.0.0", 0)
                     builder.addRoute("::", 0)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setBlocking(true)
-                    packetInterceptor.updateBlockingState(global = false)
                 }
                 isGhostMode -> {
                     builder.addRoute("0.0.0.0", 0)
@@ -544,20 +811,88 @@ class VpnBlockService : VpnService() {
                 }
             }
             
-            vpnInterface = builder.establish()
-            if (vpnInterface != null) {
-                Log.d("ARVO_BLOCK", "ARVO_VPN: VPN established successfully, interface fd=${vpnInterface?.fd}")
-                packetInterceptor.startInterception(vpnInterface!!)
+            val newInterface = builder.establish()
+            if (newInterface != null) {
+                val previousInterface = vpnInterface
+                packetInterceptor.stopInterception()
+                vpnInterface = newInterface
+                tunnelSinceTimestamp = System.currentTimeMillis()
+                tunnelRebuildCount++
+                previousInterface?.close()
+                appliedQuotaPackages = quotaPackages - failedQuotaPackages
+                appliedGlobalBlock = global
+                appliedBlockedApps = apps
+                packetInterceptor.updateBlockingState(global)
+                lastRecordedError = null
+                RealTimeData.recordVpnDiagnosticEvent(
+                    VpnDiagnosticEventType.TUNNEL_REBUILD,
+                    "Tunnel VPN établi avec ${quotaPackages.size} règle(s) de quota."
+                )
+                appliedQuotaPackages.forEach { packageName ->
+                    RealTimeData.recordVpnDiagnosticEvent(
+                        VpnDiagnosticEventType.BLOCK_APPLIED,
+                        "Règle de blocage appliquée au package $packageName.",
+                        packageName
+                    )
+                }
+                Log.d("ARVO_BLOCK", "ARVO_VPN: VPN established successfully, interface fd=${newInterface.fd}")
+                packetInterceptor.startInterception(newInterface)
                 Log.d("ARVO_BLOCK", "ARVO_NATIVE: native interception started")
-                RealTimeData.updateAndBroadcast(this, isTunnelActive = true)
+                if (failedQuotaPackages.isNotEmpty()) {
+                    val failed = failedQuotaPackages
+                    ruleErrorMessage = getString(R.string.blocking_error_rule)
+                    RealTimeData.updateAppQuotaRuntime(
+                        AppQuotaRuntimeSnapshot(
+                            globalBlocked = global,
+                            appliedPackages = appliedQuotaPackages,
+                            pendingPackages = emptySet(),
+                            failedPackages = failed,
+                            errorMessage = getString(R.string.blocking_error_rule)
+                        )
+                    )
+                } else {
+                    RealTimeData.updateAppQuotaRuntime(
+                        AppQuotaRuntimeSnapshot(
+                            globalBlocked = global,
+                            appliedPackages = appliedQuotaPackages,
+                            pendingPackages = quotaPackages - appliedQuotaPackages
+                        )
+                    )
+                }
             } else {
                 Log.e(
                     "ARVO_BLOCK",
                     "ARVO_VPN: builder.establish() returned null; user VPN consent is missing or another VPN owns the tunnel"
                 )
+                val message = getString(R.string.blocking_error_tunnel)
+                ruleErrorMessage = message
+                recordVpnError(message)
+                failedQuotaPackages = quotaPackages - appliedQuotaPackages
+                RealTimeData.updateAppQuotaRuntime(
+                    AppQuotaRuntimeSnapshot(
+                        globalBlocked = appliedGlobalBlock,
+                        appliedPackages = appliedQuotaPackages,
+                        failedPackages = failedQuotaPackages,
+                        errorMessage = ruleErrorMessage
+                    )
+                )
             }
         } catch (e: Exception) { 
-            Log.e("ARVO_BLOCK", "ARVO_VPN: VPN Failure", e) 
+            Log.e("ARVO_BLOCK", "ARVO_VPN: VPN Failure", e)
+            ruleErrorMessage = e.message ?: e.javaClass.simpleName
+            recordVpnError(ruleErrorMessage ?: getString(R.string.blocking_error_unknown))
+            failedQuotaPackages = quotaPackages - appliedQuotaPackages
+            if (vpnInterface == null) {
+                RealTimeData.updateAndBroadcast(this, isTunnelActive = false)
+            }
+            RealTimeData.updateAppQuotaRuntime(
+                AppQuotaRuntimeSnapshot(
+                    globalBlocked = appliedGlobalBlock,
+                    appliedPackages = appliedQuotaPackages,
+                    failedPackages = failedQuotaPackages,
+                    errorMessage = ruleErrorMessage
+                )
+            )
         }
     }
 
@@ -620,10 +955,21 @@ class VpnBlockService : VpnService() {
             floatingView = null; speedTextView = null 
         } 
     }
-    private fun stopVpn() { 
+    private fun stopVpn() {
         vpnInterface?.close(); vpnInterface = null
+        tunnelSinceTimestamp = null
         RealTimeData.updateAndBroadcast(this, isTunnelActive = false)
         packetInterceptor.stopInterception() 
+        appliedQuotaPackages = emptySet()
+        appliedGlobalBlock = false
+        appliedBlockedApps = emptySet()
+        RealTimeData.updateAppQuotaRuntime(AppQuotaRuntimeSnapshot())
+        updateVpnRuntimeSnapshot(
+            blockRequired = false,
+            rebuilding = false,
+            tunnelActive = false,
+            errorMessage = null
+        )
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

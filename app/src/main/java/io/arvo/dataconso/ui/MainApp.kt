@@ -43,6 +43,7 @@ sealed class Screen(val route: String, val labelRes: Int, val icon: androidx.com
     object GhostMode : Screen("ghost_mode", R.string.ghost_mode_label, Icons.Rounded.Security)
     object HotspotHistory : Screen("hotspot_history", R.string.hotspot_history_title, Icons.Rounded.History)
     object HotspotInsights : Screen("hotspot_insights", R.string.hotspot_insights_title, Icons.Rounded.Lightbulb)
+    object VpnDiagnostics : Screen("vpn_diagnostics", R.string.vpn_diagnostics_title, Icons.Rounded.Security)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,11 +56,18 @@ fun MainApp() {
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = androidx.compose.ui.platform.LocalContext.current
     var vpnPromptShown by rememberSaveable { mutableStateOf(false) }
+    var vpnPermissionRequestCount by rememberSaveable { mutableIntStateOf(0) }
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         vpnPromptShown = false
         viewModel.refreshNow()
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.vpnPermissionRequests.collect {
+            vpnPermissionRequestCount++
+        }
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -76,13 +84,14 @@ fun MainApp() {
         settings.onboardingCompleted,
         settings.vpnEnabled,
         settings.appFirewallEnabled,
-        settings.ghostModeEnabled
+        settings.ghostModeEnabled,
+        vpnPermissionRequestCount
     ) {
         val protectionEnabled = settings.vpnEnabled ||
             settings.appFirewallEnabled ||
             settings.ghostModeEnabled
         val prepareIntent = android.net.VpnService.prepare(context)
-        if (settings.onboardingCompleted && protectionEnabled &&
+        if (settings.onboardingCompleted && (protectionEnabled || vpnPermissionRequestCount > 0) &&
             prepareIntent != null && !vpnPromptShown
         ) {
             vpnPromptShown = true
@@ -224,7 +233,14 @@ fun MainApp() {
                                 onToggleVpn = { active, action -> 
                                     // Logique simple de toggle VPN (normalement via Permission check)
                                     action()
-                                }
+                                },
+                                onOpenVpnDiagnostics = { navController.navigate(Screen.VpnDiagnostics.route) }
+                            )
+                        }
+                        composable(Screen.VpnDiagnostics.route) {
+                            VpnDiagnosticsScreen(
+                                uiState = uiState,
+                                onBack = { navController.popBackStack() }
                             )
                         }
                         composable(Screen.Settings.route) {

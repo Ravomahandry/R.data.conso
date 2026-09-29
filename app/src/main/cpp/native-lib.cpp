@@ -5,13 +5,14 @@
 #include <errno.h>
 #include <atomic>
 #include <android/log.h>
+#include <poll.h>
 
 #define LOG_TAG "ARVO_NATIVE"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 // Variables atomiques natives pour éviter les appels JNI dans la boucle
 std::atomic<bool> native_global_blocked{false};
-std::atomic<bool> should_stop{false};
+std::atomic<int> loop_generation{0};
 
 extern "C" {
 
@@ -24,23 +25,43 @@ Java_io_arvo_dataconso_network_RealPacketInterceptor_updateNativeState(
 JNIEXPORT void JNICALL
 Java_io_arvo_dataconso_network_RealPacketInterceptor_stopNativeLoop(
         JNIEnv *env, jobject thiz) {
-    should_stop.store(true);
+    loop_generation.fetch_add(1);
+}
+
+JNIEXPORT jint JNICALL
+Java_io_arvo_dataconso_network_RealPacketInterceptor_beginNativeLoop(
+        JNIEnv *env, jobject thiz) {
+    return loop_generation.fetch_add(1) + 1;
 }
 
 JNIEXPORT void JNICALL
 Java_io_arvo_dataconso_network_RealPacketInterceptor_runNativePacketLoop(
-        JNIEnv *env, jobject thiz, jint fd, jboolean global) {
+        JNIEnv *env, jobject thiz, jint fd, jboolean global, jint generation) {
 
     int tun_fd = fd;
     uint8_t buffer[32768];
-    should_stop.store(false);
-
     // Synchronisation forcée au démarrage de la boucle
     native_global_blocked.store(global);
 
     __android_log_print(ANDROID_LOG_INFO, "ARVO_NATIVE", "Engine Started: Global=%d", global);
 
-    while (!should_stop.load()) {
+    while (loop_generation.load() == generation) {
+        pollfd descriptor{};
+        descriptor.fd = tun_fd;
+        descriptor.events = POLLIN;
+        const int ready = poll(&descriptor, 1, 250);
+        if (ready == 0) continue;
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            __android_log_print(ANDROID_LOG_ERROR, "ARVO_NATIVE", "Poll error: %s", strerror(errno));
+            break;
+        }
+        if ((descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+            if (loop_generation.load() != generation) break;
+            __android_log_print(ANDROID_LOG_ERROR, "ARVO_NATIVE", "TUN descriptor became unavailable");
+            break;
+        }
+
         ssize_t nread = read(tun_fd, buffer, sizeof(buffer));
 
         if (nread < 0) {

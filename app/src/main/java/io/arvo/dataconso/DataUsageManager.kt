@@ -267,4 +267,51 @@ class DataUsageManager(private val context: Context) {
         } catch (e: Exception) { }
         return resultMap
     }
+
+    fun getMultiAppUsageStrict(
+        packageNames: List<String>,
+        startTime: Long,
+        endTime: Long,
+        networkType: Int,
+        subId: Int = -1
+    ): Map<String, UsageBreakdown> {
+        val nsm = context.getSystemService(NetworkStatsManager::class.java)
+            ?: throw IllegalStateException("NetworkStatsManager is unavailable")
+        val packageToUid = packageNames.associateWith { packageName ->
+            try {
+                context.packageManager.getApplicationInfo(packageName, 0).uid
+            } catch (_: android.content.pm.PackageManager.NameNotFoundException) {
+                -1
+            }
+        }.filterValues { it >= 0 }
+        if (packageToUid.isEmpty()) return emptyMap()
+
+        val subscriberId = if (networkType == ConnectivityManager.TYPE_MOBILE) {
+            getSubscriberIdForSub(subId)
+        } else {
+            null
+        }
+        val stats = nsm.querySummary(networkType, subscriberId, startTime, endTime)
+        val uidTotals = mutableMapOf<Int, UsageBreakdown>()
+        try {
+            val bucket = NetworkStats.Bucket()
+            while (stats.hasNextBucket()) {
+                stats.getNextBucket(bucket)
+                val previous = uidTotals[bucket.uid] ?: UsageBreakdown(0L, 0L)
+                uidTotals[bucket.uid] = UsageBreakdown(
+                    saturatedAdd(previous.downloadBytes, bucket.rxBytes),
+                    saturatedAdd(previous.uploadBytes, bucket.txBytes)
+                )
+            }
+        } finally {
+            stats.close()
+        }
+
+        return packageToUid.mapValues { (_, uid) ->
+            uidTotals[uid] ?: UsageBreakdown(0L, 0L)
+        }
+    }
+
+    private fun saturatedAdd(left: Long, right: Long): Long =
+        if (right > 0 && Long.MAX_VALUE - left < right) Long.MAX_VALUE else left + right
 }
