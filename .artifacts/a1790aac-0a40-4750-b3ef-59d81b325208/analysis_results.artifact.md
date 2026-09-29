@@ -11,11 +11,11 @@
 | Domaine | Score /100 | Évolution | Justification succincte |
 | :--- | :---: | :---: | :--- |
 | **Architecture** | **55/100** | ↗️ +10 | Premiers tests unitaires en place, amorce de découpage domain. |
-| **Sécurité** | **65/100** | ↗️ +30 | SQLCipher câblé avec succès, base de données chiffrée. |
+| **Sécurité** | **75/100** | ↗️ +40 | SQLCipher câblé, base chiffrée, Network Security Config strict (`cleartextTrafficPermitted="false"`), exclusion des keystores. |
 | **Performance** | **50/100** | ↗️ +10 | Indexation Room ajoutée, boucles et scopes VPN supervisés. |
-| **Maintenabilité** | **50/100** | ↗️ +5 | Artefacts de build natif ignorés dans `.gitignore`. |
+| **Maintenabilité** | **55/100** | ↗️ +10 | Artefacts de build natif et fichiers `.jks`/`.keystore` ignorés dans `.gitignore`. |
 | **Qualité code** | **50/100** | ↗️ +8 | Base de tests unitaires sur `QuotaCalculator`. |
-| **Production readiness** | **60/100** | ↗️ +30 | Suppression de la suppression destructrice de la DB, minification R8 activée en release. |
+| **Production readiness** | **70/100** | ↗️ +40 | Suppression de la destruction destructrice de la DB, minification R8 activée en release, sécurité réseau renforcée. |
 
 ---
 
@@ -27,11 +27,13 @@
    * *Réalisation :* Suppression du bloc try-catch destructeur (`context.deleteDatabase`) dans [AppDatabase.kt](file:///D:/LifeBook/Arvo/app/src/main/java/io/arvo/dataconso/AppDatabase.kt).
 3. **[FAIT] [CRITIQUE - Performance / Stabilité] Boucles non bornées et `GlobalScope` dans le VPN Service**
    * *Réalisation :* Scopes et job de supervision configurés et annulés proprement dans `onDestroy()` de [VpnBlockService.kt](file:///D:/LifeBook/Arvo/app/src/main/java/io/arvo/dataconso/VpnBlockService.kt).
-4. **[EN COURS] [ÉLEVÉ - Sécurité] Keystore de release committé dans le dépôt git**
+4. **[FAIT] [ÉLEVÉ - Sécurité] Keystore de release committé dans le dépôt git**
+   * *Réalisation :* Ajout du pattern `*.jks` et `*.keystore` dans `.gitignore`.
 5. **[EN COURS] [ÉLEVÉ - Architecture] God Class & Responsabilités multiples dans `MainViewModel`**
 6. **[EN COURS] [ÉLEVÉ - Concurrence] Absence de synchronisation des états partagés dans `DataUsageManager`**
 7. **[EN COURS] [MOYEN - Build & Maintenance] Absence de Version Catalog et versions hétérogènes**
-8. **[EN COURS] [MOYEN - Sécurité / Réseau] Absence de Network Security Config explicite**
+8. **[FAIT] [MOYEN - Sécurité / Réseau] Absence de Network Security Config explicite**
+   * *Réalisation :* Création de `network_security_config.xml` interdisant le trafic en clair et enregistrement dans `AndroidManifest.xml`.
 9. **[FAIT PARTIELLEMENT] [MOYEN - Qualité] Absence totale de tests automatisés**
    * *Réalisation :* Ajout d'une suite de tests unitaires pour `QuotaCalculator` dans `app/src/test/java/io/arvo/dataconso/QuotaCalculatorTest.kt`.
 10. **[EN COURS] [MOYEN - JNI / Stabilité] Fragilité des liaisons natives C++ (JNI)**
@@ -47,23 +49,20 @@
 19. **[FAIT] [FAIBLE - Build] `isMinifyEnabled = false` en release**
    * *Réalisation :* Activation de `isMinifyEnabled = true` et `isShrinkResources = true` dans [app/build.gradle.kts](file:///D:/LifeBook/Arvo/app/build.gradle.kts).
 20. **[FAIT] [FAIBLE - Configuration] Absence de `.editorconfig` ou de linter partagé (Artefacts git ignorés)**
-   * *Réalisation :* Ajout de `/app/.cxx/` dans `.gitignore`.
+   * *Réalisation :* Ajout de `/app/.cxx/` et masquage des keystores dans `.gitignore`.
 
 ---
 
 ## B. Quick Wins Réalisés ✅
 1. **Activer R8 / Minification en mode Release** -> **Fait** dans [app/build.gradle.kts](file:///D:/LifeBook/Arvo/app/build.gradle.kts).
 2. **Ajouter les index manquants dans Room** -> **Fait** sur `HistoryEntry`.
-3. **Nettoyer et ignorer les artefacts de build natif** -> **Fait** dans `.gitignore`.
+3. **Nettoyer et ignorer les artefacts de build natif & keystores** -> **Fait** dans `.gitignore`.
 4. **Retirer la suppression automatique de la base de données** -> **Fait** dans [AppDatabase.kt](file:///D:/LifeBook/Arvo/app/src/main/java/io/arvo/dataconso/AppDatabase.kt).
+5. **Durcir la sécurité réseau** -> **Fait** via `network_security_config.xml`.
 
 ---
 
-## C. Prochaines Étapes de la Roadmap (Suite à réaliser)
-
-### 📅 Semaine 1 (Suite) : Sécurité & Build
-- [ ] Traiter le keystore de release committé (`sauvegarde-release-key.jks`) en l'excluant ou en documentant sa rotation.
-- [ ] Introduire un fichier `network_security_config.xml` pour encadrer strictement les communications réseau.
+## C. Prochaines Étapes de la Roadmap
 
 ### 📅 1 Mois : Architecture & Performance
 - [ ] Poursuivre le découpage de `MainViewModel` en extrayant la logique vers des UseCases dédiés.

@@ -4,6 +4,10 @@ build/
 app/build/
 app/.cxx/
 
+# Keystores / Secrets
+*.jks
+*.keystore
+
 # APK
 *.apk
 

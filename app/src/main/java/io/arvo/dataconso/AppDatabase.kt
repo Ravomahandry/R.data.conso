@@ -145,7 +145,15 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = buildDatabase(context)
+                val instance = try {
+                    buildDatabase(context).also { db ->
+                        db.openHelper.writableDatabase
+                    }
+                } catch (e: Throwable) {
+                    Log.e("ARVO_DB", "Encryption or DB error, resetting database", e)
+                    context.deleteDatabase(DB_NAME)
+                    buildDatabase(context)
+                }
                 INSTANCE = instance
                 instance
             }

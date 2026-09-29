@@ -9,9 +9,9 @@
               <option name="connection">
                 <ConnectionSetting>
                   <option name="appId" value="io.arvo.dataconso" />
-                  <option name="mobileSdkAppId" value="1:123456789012:android:1234567890abcdef" />
-                  <option name="projectId" value="arvo-dataconso" />
-                  <option name="projectNumber" value="123456789012" />
+                  <option name="mobileSdkAppId" value="1:464448899885:android:07b623fda7f1897dc421a4" />
+                  <option name="projectId" value="arvo-4417d" />
+                  <option name="projectNumber" value="464448899885" />
                 </ConnectionSetting>
               </option>
               <option name="signal" value="SIGNAL_UNSPECIFIED" />
