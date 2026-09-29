@@ -28,10 +28,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.arvo.dataconso.*
 import io.arvo.dataconso.R
 import io.arvo.dataconso.ui.*
+import io.arvo.dataconso.ui.hotspot.HotspotHistoryViewModel
+import io.arvo.dataconso.ui.hotspot.HotspotHistoryState
 
 @Composable
 fun DashboardScreen(
-    colors: DataConsColors
+    colors: DataConsColors,
+    onOpenHotspotHistory: () -> Unit
 ) {
     val context = LocalContext.current
     val formatter = remember { DataUsageManager(context) }
@@ -45,6 +48,9 @@ fun DashboardScreen(
     val fastState by mainVm.realtimeState.collectAsStateWithLifecycle()
     val slowState by mainVm.analysisState.collectAsStateWithLifecycle()
     val uiState by mainVm.uiState.collectAsStateWithLifecycle()
+    val hotspotViewModel: HotspotHistoryViewModel = hiltViewModel()
+    val hotspotState by hotspotViewModel.uiState.collectAsStateWithLifecycle()
+    val dashboardFormatter = remember { DataUsageManager(context) }
 
     Column(
         modifier = Modifier
@@ -80,6 +86,14 @@ fun DashboardScreen(
         }
         Spacer(modifier = Modifier.height(12.dp))
         GranularitySelector(currentGranularity, { mainVm.setGranularity(it) }, colors)
+
+        Spacer(modifier = Modifier.height(16.dp))
+        HotspotCard(
+            state = hotspotState,
+            formatter = dashboardFormatter,
+            colors = colors,
+            onClick = onOpenHotspotHistory
+        )
         
         Spacer(modifier = Modifier.height(32.dp))
 
@@ -182,6 +196,56 @@ fun DashboardScreen(
         }
         
         Spacer(modifier = Modifier.height(100.dp))
+    }
+}
+
+@Composable
+private fun HotspotCard(
+    state: HotspotHistoryState,
+    formatter: DataUsageManager,
+    colors: DataConsColors,
+    onClick: () -> Unit
+) {
+    GlassCardSommite(colors = colors, onClick = onClick) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Rounded.WifiTethering,
+                contentDescription = null,
+                tint = if (state.isHotspotActive) Color(0xFF10B981) else colors.primary,
+                modifier = Modifier.size(28.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.hotspot_title),
+                    fontWeight = FontWeight.Bold,
+                    color = colors.onSurface
+                )
+                Text(
+                    stringResource(
+                        if (state.isHotspotActive) R.string.hotspot_status_active
+                        else R.string.hotspot_status_inactive
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurface.copy(alpha = 0.7f)
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    formatter.formatData(state.today.totalBytes),
+                    fontWeight = FontWeight.Black,
+                    color = colors.primary
+                )
+                Text(
+                    stringResource(R.string.hotspot_session_count, state.today.sessionCount),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurface.copy(alpha = 0.7f)
+                )
+            }
+        }
     }
 }
 

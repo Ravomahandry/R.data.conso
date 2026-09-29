@@ -21,6 +21,7 @@ tflite = "2.14.0"
 tfliteSupport = "0.4.4"
 accompanist = "0.32.0"
 junit = "4.13.2"
+coroutines = "1.10.2"
 androidxJunit = "1.1.5"
 espresso = "3.5.1"
 ksp = "2.2.10-2.0.2"
@@ -69,6 +70,7 @@ tensorflow-lite-support = { group = "org.tensorflow", name = "tensorflow-lite-su
 accompanist-drawablepainter = { group = "com.google.accompanist", name = "accompanist-drawablepainter", version.ref = "accompanist" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso" }
 androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }

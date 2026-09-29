@@ -111,6 +111,7 @@ dependencies {
     implementation(libs.tensorflow.lite.support)
 
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
     implementation(libs.accompanist.drawablepainter)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

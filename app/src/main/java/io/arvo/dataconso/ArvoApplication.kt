@@ -12,6 +12,7 @@ import android.app.ActivityManager
 import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import com.google.firebase.FirebaseApp
+import io.arvo.dataconso.workers.HotspotMonitorScheduler
 
 @HiltAndroidApp
 class ArvoApplication : Application(), Configuration.Provider {
@@ -21,6 +22,7 @@ class ArvoApplication : Application(), Configuration.Provider {
         super.onCreate()
 
         WorkManager.initialize(this, workManagerConfiguration)
+        HotspotMonitorScheduler.schedule(this)
         
         // Rigueur Etape 10 : Application de la locale globale
         val prefs = getSharedPreferences("arvo_settings", android.content.Context.MODE_PRIVATE)

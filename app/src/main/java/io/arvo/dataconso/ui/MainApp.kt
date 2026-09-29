@@ -30,6 +30,7 @@ import io.arvo.dataconso.ui.dashboard.DashboardScreen
 import io.arvo.dataconso.ui.onboarding.PermissionOnboardingScreen
 import io.arvo.dataconso.ui.onboarding.PermissionViewModel
 import io.arvo.dataconso.ui.settings.GhostModeSettingsScreen
+import io.arvo.dataconso.ui.hotspot.HotspotHistoryScreen
 
 sealed class Screen(val route: String, val labelRes: Int, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     object Dashboard : Screen("dashboard", R.string.nav_dashboard, Icons.Rounded.Dashboard)
@@ -37,6 +38,7 @@ sealed class Screen(val route: String, val labelRes: Int, val icon: androidx.com
     object Quotas : Screen("quotas", R.string.nav_quotas, Icons.Rounded.SecurityUpdateGood)
     object Settings : Screen("settings", R.string.nav_settings, Icons.Rounded.Settings)
     object GhostMode : Screen("ghost_mode", R.string.ghost_mode_label, Icons.Rounded.Security)
+    object HotspotHistory : Screen("hotspot_history", R.string.hotspot_history_title, Icons.Rounded.WifiTethering)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -176,7 +178,15 @@ fun MainApp() {
                         modifier = Modifier.padding(padding)
                     ) {
                         composable(Screen.Dashboard.route) {
-                            DashboardScreen(colors = colors)
+                            DashboardScreen(
+                                colors = colors,
+                                onOpenHotspotHistory = {
+                                    navController.navigate(Screen.HotspotHistory.route)
+                                }
+                            )
+                        }
+                        composable(Screen.HotspotHistory.route) {
+                            HotspotHistoryScreen(onBack = { navController.popBackStack() })
                         }
                         composable(Screen.Analysis.route) {
                             AnalysisScreen(

@@ -6,6 +6,8 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import io.arvo.dataconso.data.AppSettings
 import io.arvo.dataconso.data.DataRepository
+import io.arvo.dataconso.data.HotspotSessionEntity
+import io.arvo.dataconso.repository.HotspotRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,7 +27,8 @@ import javax.inject.Singleton
 @Singleton
 class CloudSyncManager @Inject constructor(
     private val repository: DataRepository,
-    private val analytics: FirebaseAnalytics
+    private val analytics: FirebaseAnalytics,
+    private val hotspotRepository: HotspotRepository
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val auth = FirebaseAuth.getInstance()
@@ -57,6 +60,7 @@ class CloudSyncManager @Inject constructor(
                 
                 if (user == null) return@launch
 
+                restoreHotspotSessions()
                 val settings = repository.getSettings()
                 val data = mapOf(
                     "totalMoneySaved" to settings.totalMoneySaved,
@@ -72,6 +76,7 @@ class CloudSyncManager @Inject constructor(
                     database.child("users").child(user.uid).updateChildren(data).await()
                     Log.d("ARVO_CLOUD", "Sync successful for user: ${user.uid}")
                 }
+                syncHotspotSessions()
                 
                 // Analytics : Suivi des économies par palier
                 if (settings.totalMoneySaved > 0) {
@@ -88,6 +93,62 @@ class CloudSyncManager @Inject constructor(
 
     fun logEvent(name: String, params: android.os.Bundle?) {
         analytics.logEvent(name, params)
+    }
+
+    suspend fun syncHotspotSessions() {
+        val user = auth.currentUser ?: return
+        val database = db ?: return
+        val sessionsRef = database.child("users").child(user.uid).child("hotspotSessions")
+        for (session in hotspotRepository.getUnsyncedClosedSessions()) {
+            val key = "${session.startTimestamp}_${session.sessionId}"
+            sessionsRef.child(key).setValue(
+                mapOf(
+                    "startTimestamp" to session.startTimestamp,
+                    "endTimestamp" to session.endTimestamp,
+                    "durationMillis" to session.durationMillis,
+                    "rxBytes" to session.rxBytes,
+                    "txBytes" to session.txBytes,
+                    "totalBytes" to session.totalBytes,
+                    "sessionId" to session.sessionId
+                )
+            ).await()
+            hotspotRepository.markSynced(session.id)
+        }
+    }
+
+    suspend fun restoreHotspotSessions() {
+        val user = auth.currentUser ?: return
+        try {
+            val database = db ?: return
+            val snapshot = database.child("users")
+                .child(user.uid)
+                .child("hotspotSessions")
+                .get()
+                .await()
+
+            for (child in snapshot.children) {
+                val startTimestamp = child.child("startTimestamp").getValue(Long::class.java) ?: continue
+                val sessionId = child.child("sessionId").getValue(String::class.java) ?: continue
+                val endTimestamp = child.child("endTimestamp").getValue(Long::class.java) ?: continue
+                if (startTimestamp <= 0 || endTimestamp < startTimestamp) continue
+
+                hotspotRepository.restoreSession(
+                    HotspotSessionEntity(
+                        startTimestamp = startTimestamp,
+                        endTimestamp = endTimestamp,
+                        durationMillis = child.child("durationMillis").getValue(Long::class.java)
+                            ?: endTimestamp - startTimestamp,
+                        rxBytes = child.child("rxBytes").getValue(Long::class.java) ?: 0,
+                        txBytes = child.child("txBytes").getValue(Long::class.java) ?: 0,
+                        totalBytes = child.child("totalBytes").getValue(Long::class.java) ?: 0,
+                        synced = true,
+                        sessionId = sessionId
+                    )
+                )
+            }
+        } catch (exception: Exception) {
+            Log.e("ARVO_CLOUD", "Hotspot session restore failed", exception)
+        }
     }
 
     /**
