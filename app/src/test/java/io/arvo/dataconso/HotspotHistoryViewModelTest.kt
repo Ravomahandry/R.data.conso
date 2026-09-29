@@ -2,6 +2,8 @@ package io.arvo.dataconso
 
 import io.arvo.dataconso.data.HotspotSessionEntity
 import io.arvo.dataconso.repository.HotspotClock
+import io.arvo.dataconso.repository.HotspotBatteryProvider
+import io.arvo.dataconso.repository.HotspotQuotaProvider
 import io.arvo.dataconso.repository.HotspotRepository
 import io.arvo.dataconso.repository.HotspotTrafficCounters
 import io.arvo.dataconso.ui.hotspot.HotspotHistoryViewModel
@@ -13,6 +15,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -58,7 +61,15 @@ class HotspotHistoryViewModelTest {
                     override fun nowMillis() = now
                 }
             )
-            val viewModel = HotspotHistoryViewModel(repository)
+            val viewModel = HotspotHistoryViewModel(
+                repository,
+                object : HotspotQuotaProvider {
+                    override fun monthlyQuotaBytes() = flowOf(5_000L)
+                },
+                object : HotspotBatteryProvider {
+                    override fun batteryPercent() = 80
+                }
+            )
             viewModelStore.put("hotspot-history", viewModel)
             advanceUntilIdle()
 

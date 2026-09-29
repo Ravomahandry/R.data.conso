@@ -30,6 +30,10 @@ import io.arvo.dataconso.R
 import io.arvo.dataconso.ui.*
 import io.arvo.dataconso.ui.hotspot.HotspotHistoryViewModel
 import io.arvo.dataconso.ui.hotspot.HotspotHistoryState
+import io.arvo.dataconso.ui.hotspot.formatDuration
+import io.arvo.dataconso.util.FormatUtils
+import java.text.DateFormat
+import java.util.Date
 
 @Composable
 fun DashboardScreen(
@@ -50,7 +54,6 @@ fun DashboardScreen(
     val uiState by mainVm.uiState.collectAsStateWithLifecycle()
     val hotspotViewModel: HotspotHistoryViewModel = hiltViewModel()
     val hotspotState by hotspotViewModel.uiState.collectAsStateWithLifecycle()
-    val dashboardFormatter = remember { DataUsageManager(context) }
 
     Column(
         modifier = Modifier
@@ -90,7 +93,6 @@ fun DashboardScreen(
         Spacer(modifier = Modifier.height(16.dp))
         HotspotCard(
             state = hotspotState,
-            formatter = dashboardFormatter,
             colors = colors,
             onClick = onOpenHotspotHistory
         )
@@ -202,7 +204,6 @@ fun DashboardScreen(
 @Composable
 private fun HotspotCard(
     state: HotspotHistoryState,
-    formatter: DataUsageManager,
     colors: DataConsColors,
     onClick: () -> Unit
 ) {
@@ -235,7 +236,7 @@ private fun HotspotCard(
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    formatter.formatData(state.today.totalBytes),
+                    FormatUtils.formatHotspotDataSize(state.today.totalBytes),
                     fontWeight = FontWeight.Black,
                     color = colors.primary
                 )
@@ -246,6 +247,43 @@ private fun HotspotCard(
                 )
             }
         }
+        Spacer(modifier = Modifier.height(10.dp))
+        val current = state.currentSession
+        Text(
+            stringResource(
+                R.string.hotspot_dashboard_session_details,
+                current?.let {
+                    DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it.startTimestamp))
+                } ?: stringResource(R.string.hotspot_unknown),
+                current?.let {
+                    formatDuration(
+                        (System.currentTimeMillis() - it.startTimestamp)
+                            .coerceAtLeast(it.durationMillis)
+                    )
+                } ?: "—",
+                current?.let { FormatUtils.formatHotspotDataSize(it.totalBytes) } ?: "0 B",
+                state.connectedDeviceCount?.toString()
+                    ?: stringResource(R.string.hotspot_devices_unavailable),
+                state.lastSyncTimestamp?.let {
+                    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it))
+                } ?: stringResource(R.string.hotspot_never_synced)
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurface.copy(alpha = 0.75f),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+        )
+        Text(
+            stringResource(
+                R.string.hotspot_dashboard_forecast_details,
+                FormatUtils.formatHotspotDataSize(state.forecast.remainingBytes),
+                FormatUtils.formatHotspotDataSize(state.forecast.projectedPeriodEndBytes),
+                state.healthScore.score,
+                stringResource(R.string.hotspot_measurement_unavailable)
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurface.copy(alpha = 0.75f),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
     }
 }
 

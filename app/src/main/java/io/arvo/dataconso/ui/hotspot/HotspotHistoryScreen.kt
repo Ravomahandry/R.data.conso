@@ -25,18 +25,16 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.arvo.dataconso.DataUsageManager
 import io.arvo.dataconso.R
 import io.arvo.dataconso.data.HotspotSessionEntity
+import io.arvo.dataconso.util.FormatUtils
 import java.text.DateFormat
 import java.util.Date
 
@@ -47,9 +45,6 @@ fun HotspotHistoryScreen(
     viewModel: HotspotHistoryViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    val formatter = remember { DataUsageManager(context) }
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -77,7 +72,15 @@ fun HotspotHistoryScreen(
                         title = stringResource(R.string.hotspot_today),
                         bytes = state.today.totalBytes,
                         sessions = state.today.sessionCount,
-                        formatter = formatter
+                        detail = null
+                    )
+                }
+                item {
+                    HotspotStatsCard(
+                        title = stringResource(R.string.hotspot_week),
+                        bytes = state.week.totalBytes,
+                        sessions = state.week.sessionCount,
+                        detail = null
                     )
                 }
                 item {
@@ -92,9 +95,10 @@ fun HotspotHistoryScreen(
                         title = stringResource(R.string.hotspot_month),
                         bytes = state.month.totalBytes,
                         sessions = state.month.sessionCount,
-                        formatter = formatter
+                        detail = null
                     )
                 }
+                item { HotspotAnalyticsSection(state.analytics) }
                 item {
                     Text(
                         text = stringResource(R.string.hotspot_sessions),
@@ -107,7 +111,7 @@ fun HotspotHistoryScreen(
                     item { Text(stringResource(R.string.hotspot_no_sessions)) }
                 } else {
                     items(state.sessions, key = { it.id }) { session ->
-                        HotspotSessionItem(session, formatter)
+                        HotspotSessionItem(session)
                     }
                 }
                 state.errorMessage?.let { message ->
@@ -123,56 +127,117 @@ private fun HotspotStatsCard(
     title: String,
     bytes: Long,
     sessions: Int,
-    formatter: DataUsageManager
+    detail: String?
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             Text(
-                formatter.formatData(bytes),
+                FormatUtils.formatHotspotDataSize(bytes),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
             Text(stringResource(R.string.hotspot_session_count, sessions))
+            detail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
 }
 
 @Composable
 private fun HotspotSessionItem(
-    session: HotspotSessionEntity,
-    formatter: DataUsageManager
+    session: HotspotSessionEntity
 ) {
     val endTime = if (session.endTimestamp == 0L) System.currentTimeMillis() else session.endTimestamp
     Card(
         modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.WifiTethering, contentDescription = null)
                 Text(
-                    DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                        .format(Date(session.startTimestamp)),
+                    DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(session.startTimestamp)),
                     modifier = Modifier.padding(start = 8.dp),
                     fontWeight = FontWeight.SemiBold
                 )
             }
             Spacer(Modifier.height(6.dp))
-            Text(
-                stringResource(
-                    R.string.hotspot_duration,
-                    formatDuration(session.durationMillis.coerceAtLeast(endTime - session.startTimestamp))
+            DetailLine(
+                stringResource(R.string.hotspot_start_time),
+                DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(session.startTimestamp))
+            )
+            DetailLine(
+                stringResource(R.string.hotspot_end_time),
+                if (session.endTimestamp == 0L) stringResource(R.string.hotspot_status_active)
+                else DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(session.endTimestamp))
+            )
+            DetailLine(
+                stringResource(R.string.hotspot_duration_label),
+                formatDuration(
+                    session.durationMillis.coerceAtLeast(endTime - session.startTimestamp)
                 )
             )
-            Text(stringResource(R.string.hotspot_consumption, formatter.formatData(session.totalBytes)))
+            DetailLine(stringResource(R.string.hotspot_rx), FormatUtils.formatHotspotDataSize(session.rxBytes))
+            DetailLine(stringResource(R.string.hotspot_tx), FormatUtils.formatHotspotDataSize(session.txBytes))
+            DetailLine(stringResource(R.string.hotspot_total), FormatUtils.formatHotspotDataSize(session.totalBytes))
+            val duration = session.durationMillis.coerceAtLeast(endTime - session.startTimestamp)
+            val averageBytesPerSecond = if (duration > 0) {
+                (session.totalBytes.coerceAtLeast(0) * 1_000.0 / duration).toLong()
+            } else 0L
+            DetailLine(
+                stringResource(R.string.hotspot_average_throughput),
+                "${FormatUtils.formatHotspotDataSize(averageBytesPerSecond)}/s"
+            )
+            DetailLine(
+                stringResource(R.string.hotspot_peak_throughput),
+                stringResource(R.string.hotspot_measurement_unavailable)
+            )
+            DetailLine(
+                stringResource(R.string.hotspot_connected_devices),
+                stringResource(R.string.hotspot_devices_unavailable)
+            )
+            DetailLine(
+                stringResource(R.string.hotspot_sync_status),
+                if (session.synced) {
+                    session.lastSyncedTimestamp.takeIf { it > 0 }?.let {
+                        stringResource(
+                            R.string.hotspot_synced_at,
+                            DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it))
+                        )
+                    } ?: stringResource(R.string.hotspot_synced)
+                } else stringResource(R.string.hotspot_not_synced)
+            )
         }
     }
 }
 
-private fun formatDuration(durationMillis: Long): String {
-    val totalMinutes = durationMillis.coerceAtLeast(0) / 60_000
-    val hours = totalMinutes / 60
-    val minutes = totalMinutes % 60
-    return if (hours > 0) "${hours} h ${minutes} min" else "$minutes min"
+@Composable
+private fun HotspotAnalyticsSection(analytics: io.arvo.dataconso.domain.model.HotspotAnalytics) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                stringResource(R.string.hotspot_analytics),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            DetailLine(stringResource(R.string.hotspot_top_day), FormatUtils.formatHotspotDataSize(analytics.topDayBytes))
+            DetailLine(stringResource(R.string.hotspot_top_week), FormatUtils.formatHotspotDataSize(analytics.topWeekBytes))
+            DetailLine(stringResource(R.string.hotspot_top_month), FormatUtils.formatHotspotDataSize(analytics.topMonthBytes))
+            DetailLine(stringResource(R.string.hotspot_cumulative_duration), formatDuration(analytics.cumulativeDurationMillis))
+            DetailLine(stringResource(R.string.hotspot_cumulative_consumption), FormatUtils.formatHotspotDataSize(analytics.cumulativeBytes))
+            Text(
+                stringResource(R.string.hotspot_session_count, analytics.sessionCount),
+                modifier = Modifier.padding(top = 4.dp),
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
 }

@@ -132,7 +132,7 @@ interface AppQuotaDao {
         AppQuotaEntity::class,
         HotspotSessionEntity::class
     ],
-    version = 33,
+    version = 34,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -184,6 +184,21 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_33_34 = object : androidx.room.migration.Migration(33, 34) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE hotspot_sessions ADD COLUMN lastSyncedTimestamp " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+                database.execSQL(
+                    "ALTER TABLE hotspot_sessions ADD COLUMN lastRxBytes INTEGER NOT NULL DEFAULT 0"
+                )
+                database.execSQL(
+                    "ALTER TABLE hotspot_sessions ADD COLUMN lastTxBytes INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = try {
@@ -206,7 +221,7 @@ abstract class AppDatabase : RoomDatabase() {
 
             return Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, DB_NAME)
                 .openHelperFactory(factory)
-                .addMigrations(MIGRATION_31_32, MIGRATION_32_33)
+                .addMigrations(MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34)
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .enableMultiInstanceInvalidation()
                 .setQueryCallback({ sqlQuery, _ ->

@@ -52,6 +52,10 @@ class HotspotRepository @Inject constructor(
         sessionDao.observeSessionsFrom(startOfMonth(clock.nowMillis()))
             .map { sessions -> HotspotStatisticsCalculator.summarize(sessions).totalBytes }
 
+    fun getWeeklyStatistics(): Flow<HotspotStatistics> =
+        sessionDao.observeSessionsFrom(startOfWeek(clock.nowMillis()))
+            .map(HotspotStatisticsCalculator::summarize)
+
     fun getTodayStatistics(): Flow<HotspotStatistics> =
         sessionDao.observeSessionsFrom(startOfDay(clock.nowMillis()))
             .map(HotspotStatisticsCalculator::summarize)
@@ -67,11 +71,15 @@ class HotspotRepository @Inject constructor(
             return@withLock updateUsage(current, now)
         }
 
+        val rxBaseline = trafficCounters.rxBytes()
+        val txBaseline = trafficCounters.txBytes()
         val session = HotspotSessionEntity(
             startTimestamp = now,
             sessionId = UUID.randomUUID().toString(),
-            baselineRxBytes = trafficCounters.rxBytes(),
-            baselineTxBytes = trafficCounters.txBytes()
+            baselineRxBytes = rxBaseline,
+            baselineTxBytes = txBaseline,
+            lastRxBytes = rxBaseline,
+            lastTxBytes = txBaseline
         )
         val id = sessionDao.insert(session)
         check(id >= 0) { "Unable to persist hotspot session" }
@@ -101,8 +109,8 @@ class HotspotRepository @Inject constructor(
     suspend fun getUnsyncedClosedSessions(): List<HotspotSessionEntity> =
         sessionDao.getUnsyncedClosedSessions()
 
-    suspend fun markSynced(sessionId: Long) {
-        sessionDao.markSynced(sessionId)
+    suspend fun markSynced(sessionId: Long, syncedAt: Long = clock.nowMillis()) {
+        sessionDao.markSynced(sessionId, syncedAt)
     }
 
     suspend fun restoreSession(session: HotspotSessionEntity): Boolean {
@@ -116,27 +124,42 @@ class HotspotRepository @Inject constructor(
         session: HotspotSessionEntity,
         timestamp: Long
     ): HotspotSessionEntity {
-        val rxBytes = HotspotStatisticsCalculator.trafficDelta(
-            trafficCounters.rxBytes(),
-            session.baselineRxBytes
-        )
-        val txBytes = HotspotStatisticsCalculator.trafficDelta(
-            trafficCounters.txBytes(),
-            session.baselineTxBytes
-        )
+        val sampledRx = trafficCounters.rxBytes()
+        val sampledTx = trafficCounters.txBytes()
+        val rx = accumulateBytes(session.rxBytes, session.lastRxBytes, sampledRx, session.baselineRxBytes)
+        val tx = accumulateBytes(session.txBytes, session.lastTxBytes, sampledTx, session.baselineTxBytes)
         val updated = session.copy(
             durationMillis = HotspotStatisticsCalculator.durationMillis(
                 session.startTimestamp,
                 timestamp
             ),
-            rxBytes = rxBytes,
-            txBytes = txBytes,
-            totalBytes = HotspotStatisticsCalculator.totalBytes(rxBytes, txBytes),
+            rxBytes = rx.total,
+            txBytes = tx.total,
+            totalBytes = HotspotStatisticsCalculator.totalBytes(rx.total, tx.total),
+            lastRxBytes = rx.lastCounter,
+            lastTxBytes = tx.lastCounter,
             synced = false
         )
         sessionDao.update(updated)
         return updated
     }
+
+    private fun accumulateBytes(
+        accumulated: Long,
+        previousCounter: Long,
+        currentCounter: Long,
+        initialCounter: Long
+    ): CounterAccumulation {
+        if (currentCounter < 0) {
+            return CounterAccumulation(accumulated, previousCounter)
+        }
+        val reference = if (previousCounter > 0) previousCounter else initialCounter
+        val delta = HotspotStatisticsCalculator.trafficDelta(currentCounter, reference)
+        val total = if (Long.MAX_VALUE - accumulated < delta) Long.MAX_VALUE else accumulated + delta
+        return CounterAccumulation(total, currentCounter)
+    }
+
+    private data class CounterAccumulation(val total: Long, val lastCounter: Long)
 
     private fun startOfDay(timestamp: Long): Long =
         Calendar.getInstance().apply {
@@ -151,6 +174,16 @@ class HotspotRepository @Inject constructor(
         Calendar.getInstance().apply {
             timeInMillis = timestamp
             set(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+    private fun startOfWeek(timestamp: Long): Long =
+        Calendar.getInstance().apply {
+            timeInMillis = timestamp
+            set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
             set(Calendar.HOUR_OF_DAY, 0)
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)

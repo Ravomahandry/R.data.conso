@@ -21,9 +21,12 @@ data class HotspotSessionEntity(
     @ColumnInfo(defaultValue = "0") val txBytes: Long = 0,
     @ColumnInfo(defaultValue = "0") val totalBytes: Long = 0,
     @ColumnInfo(defaultValue = "0") val synced: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val lastSyncedTimestamp: Long = 0,
     @ColumnInfo(defaultValue = "''") val sessionId: String,
     @ColumnInfo(defaultValue = "0") val baselineRxBytes: Long = 0,
-    @ColumnInfo(defaultValue = "0") val baselineTxBytes: Long = 0
+    @ColumnInfo(defaultValue = "0") val baselineTxBytes: Long = 0,
+    @ColumnInfo(defaultValue = "0") val lastRxBytes: Long = 0,
+    @ColumnInfo(defaultValue = "0") val lastTxBytes: Long = 0
 ) {
     val isActive: Boolean
         get() = endTimestamp == 0L

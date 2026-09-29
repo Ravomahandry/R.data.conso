@@ -31,14 +31,18 @@ import io.arvo.dataconso.ui.onboarding.PermissionOnboardingScreen
 import io.arvo.dataconso.ui.onboarding.PermissionViewModel
 import io.arvo.dataconso.ui.settings.GhostModeSettingsScreen
 import io.arvo.dataconso.ui.hotspot.HotspotHistoryScreen
+import io.arvo.dataconso.ui.hotspot.HotspotDashboardScreen
+import io.arvo.dataconso.ui.hotspot.HotspotInsightsScreen
 
 sealed class Screen(val route: String, val labelRes: Int, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     object Dashboard : Screen("dashboard", R.string.nav_dashboard, Icons.Rounded.Dashboard)
+    object Hotspot : Screen("hotspot", R.string.nav_hotspot, Icons.Rounded.WifiTethering)
     object Analysis : Screen("analysis", R.string.nav_analysis, Icons.Rounded.Analytics)
     object Quotas : Screen("quotas", R.string.nav_quotas, Icons.Rounded.SecurityUpdateGood)
     object Settings : Screen("settings", R.string.nav_settings, Icons.Rounded.Settings)
     object GhostMode : Screen("ghost_mode", R.string.ghost_mode_label, Icons.Rounded.Security)
-    object HotspotHistory : Screen("hotspot_history", R.string.hotspot_history_title, Icons.Rounded.WifiTethering)
+    object HotspotHistory : Screen("hotspot_history", R.string.hotspot_history_title, Icons.Rounded.History)
+    object HotspotInsights : Screen("hotspot_insights", R.string.hotspot_insights_title, Icons.Rounded.Lightbulb)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -147,7 +151,13 @@ fun MainApp() {
                                 containerColor = colors.surface.copy(alpha = 0.8f),
                                 tonalElevation = 8.dp
                             ) {
-                                val items = listOf(Screen.Dashboard, Screen.Analysis, Screen.Quotas, Screen.Settings)
+                                val items = listOf(
+                                    Screen.Dashboard,
+                                    Screen.Hotspot,
+                                    Screen.Analysis,
+                                    Screen.Quotas,
+                                    Screen.Settings
+                                )
                                 items.forEach { screen ->
                                     val selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true
                                     NavigationBarItem(
@@ -181,12 +191,21 @@ fun MainApp() {
                             DashboardScreen(
                                 colors = colors,
                                 onOpenHotspotHistory = {
-                                    navController.navigate(Screen.HotspotHistory.route)
+                                    navController.navigate(Screen.Hotspot.route)
                                 }
+                            )
+                        }
+                        composable(Screen.Hotspot.route) {
+                            HotspotDashboardScreen(
+                                onOpenHistory = { navController.navigate(Screen.HotspotHistory.route) },
+                                onOpenInsights = { navController.navigate(Screen.HotspotInsights.route) }
                             )
                         }
                         composable(Screen.HotspotHistory.route) {
                             HotspotHistoryScreen(onBack = { navController.popBackStack() })
+                        }
+                        composable(Screen.HotspotInsights.route) {
+                            HotspotInsightsScreen(onBack = { navController.popBackStack() })
                         }
                         composable(Screen.Analysis.route) {
                             AnalysisScreen(

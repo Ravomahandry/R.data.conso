@@ -24,6 +24,7 @@ class HotspotMonitorWorker @AssistedInject constructor(
         return try {
             if (detector.isHotspotActive()) {
                 hotspotRepository.startSession()
+                hotspotRepository.refreshActiveSession()
             } else {
                 hotspotRepository.stopSession()
             }

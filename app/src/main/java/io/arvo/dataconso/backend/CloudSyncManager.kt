@@ -109,7 +109,8 @@ class CloudSyncManager @Inject constructor(
                     "rxBytes" to session.rxBytes,
                     "txBytes" to session.txBytes,
                     "totalBytes" to session.totalBytes,
-                    "sessionId" to session.sessionId
+                    "sessionId" to session.sessionId,
+                    "lastSyncedTimestamp" to System.currentTimeMillis()
                 )
             ).await()
             hotspotRepository.markSynced(session.id)
@@ -142,6 +143,8 @@ class CloudSyncManager @Inject constructor(
                         txBytes = child.child("txBytes").getValue(Long::class.java) ?: 0,
                         totalBytes = child.child("totalBytes").getValue(Long::class.java) ?: 0,
                         synced = true,
+                        lastSyncedTimestamp = child.child("lastSyncedTimestamp")
+                            .getValue(Long::class.java) ?: 0,
                         sessionId = sessionId
                     )
                 )

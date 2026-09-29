@@ -57,10 +57,13 @@ internal class FakeHotspotSessionDao : HotspotSessionDao {
     override suspend fun getUnsyncedClosedSessions(): List<HotspotSessionEntity> =
         sessions.filter { !it.synced && it.endTimestamp > 0 }
 
-    override suspend fun markSynced(id: Long) {
+    override suspend fun markSynced(id: Long, syncedAt: Long) {
         val index = sessions.indexOfFirst { it.id == id }
         if (index >= 0) {
-            sessions[index] = sessions[index].copy(synced = true)
+            sessions[index] = sessions[index].copy(
+                synced = true,
+                lastSyncedTimestamp = syncedAt
+            )
             changed()
         }
     }

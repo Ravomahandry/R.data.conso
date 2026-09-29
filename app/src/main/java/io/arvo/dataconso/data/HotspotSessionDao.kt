@@ -36,6 +36,6 @@ interface HotspotSessionDao {
     @Query("SELECT * FROM hotspot_sessions WHERE synced = 0 AND endTimestamp > 0 ORDER BY startTimestamp ASC")
     suspend fun getUnsyncedClosedSessions(): List<HotspotSessionEntity>
 
-    @Query("UPDATE hotspot_sessions SET synced = 1 WHERE id = :id")
-    suspend fun markSynced(id: Long)
+    @Query("UPDATE hotspot_sessions SET synced = 1, lastSyncedTimestamp = :syncedAt WHERE id = :id")
+    suspend fun markSynced(id: Long, syncedAt: Long)
 }
